@@ -1,10 +1,9 @@
-https://chatgpt.com/share/6a84777c-f208-83ec-81a2-c8f8ba10aad4
-
 # LeetVibeCode — MVP Design
 
 **Date:** 2026-08-22
 **Status:** Approved design, pending implementation plan
 **Goal:** Investor-demo-ready website in ~1 month
+**Source:** https://chatgpt.com/share/6a84777c-f208-83ec-81a2-c8f8ba10aad4
 
 ## Product Thesis
 
@@ -29,12 +28,12 @@ R = Accuracy × (0.7 + 0.3 × Performance)
 ```
 
 - Accuracy = passed tests / total tests.
-- Performance = `min(1, reference_time / submission_time)` on benchmark inputs; timeout/crash → 0. `bench.py` reports the **median of 3 timed iterations** to suppress scheduler noise; `reference_time` is measured at publish-CI time inside the identical container class and stored with the challenge (residual host-drift noise affects all players equally — accepted risk).
+- Performance = `min(1, reference_time / submission_time)`, where each time is the **sum across the challenge's benchmark inputs** (larger inputs naturally dominate); any input timing out or crashing → Performance = 0. `bench.py` reports the **median of 3 timed iterations** per input to suppress scheduler noise; `reference_time` is measured at publish-CI time inside the identical container class and stored with the challenge (residual host-drift noise affects all players equally — accepted risk).
 - Multiplicative gating: fast-but-wrong = 0; correct-and-fast beats correct-and-slow by at most 30%.
 
 **Model weighting (worst weighted most):** models ranked by run score within the round, weighted as powers of two (worst ≈ 53%, then ≈ 27%, ≈ 13%, ≈ 7% for 4 models). Platform-errored runs are excluded before ranking; weights renormalize over surviving runs.
 
-**Token efficiency:** total tokens (prompt + completion, summed across all models and rounds) vs. per-challenge par budget: `token_factor = min(1, par / total)`, floored at 0.25. A modifier, never dominant.
+**Token efficiency:** total tokens (prompt + completion, summed across all models and rounds) vs. per-challenge par budget: `token_factor = min(1, par / total)`, floored at 0.25. A modifier, never dominant. Tokens from platform-errored runs are excluded from the total — infra luck must not affect `token_factor` either (cost guards, not scoring, account for that spend).
 
 **Round weighting:** Round 1 = 40%, Round 2 = 60% (rewards extensible architecture).
 
@@ -65,20 +64,20 @@ R = Accuracy × (0.7 + 0.3 × Performance)
 User              (id, email, name, passwordHash, createdAt)
 Challenge         (id, slug, title, description, difficulty, parTokens,
                    followupPrompt, status, createdAt)
-Attempt           (id, userId, challengeId, startedAt, completedAt, finalScore)
+Attempt           (id, userId, challengeId, startedAt, completedAt, finalScore, totalTokens)
 Round             (id, attemptId, index [0=build, 1=extend], promptText, submittedAt)
 Model             (id, openrouterId, displayName, sizeTier, isActive)
-Run               (id, roundId, modelId, jobId, generatedCode, promptTokens,
+Run               (id, roundId, modelId, generatedCode, promptTokens,
                    completionTokens, status[pending|generating|testing|done|error],
                    accuracy, perfScore, runScore, errorMessage)
 Job               (id, runId, type[generate|test], state, claimedBy, claimedAt,
                    result, error, createdAt)
 TestResult        (id, runId, name, passed, message, runtimeMs)
 BenchmarkResult   (id, runId, inputSize, timeMs, memoryMb, timedOut)
-LeaderboardEntry  (attemptId, userId, challengeId, score, totalTokens, rank)
 ```
 
-- Attempt = one user × one challenge (full 2-round journey); final score denormalized for leaderboard queries.
+- Attempt = one user × one challenge (full 2-round journey); finalScore + totalTokens denormalized onto it. The leaderboard is a read-time query over completed attempts (best attempt per user, `RANK()` window per challenge) — no separate table, no stored rank to go stale.
+- Job → Run is many-to-one (a run has a generate job and a test job); the FK lives on Job only.
 - Run = one model × one round (8 runs per standard attempt).
 - TestResult/BenchmarkResult kept per-run for drill-down transparency.
 
@@ -122,7 +121,7 @@ followup:
 
 ## Error Handling & Edge Cases
 
-- **Model/API failure:** retry ×2 with backoff → run errors with visible message. Platform-fault vs submission-fault rule: platform faults (API failure after retries, judge malfunction) **exclude** the run from that round's ranking — power-of-two weights renormalize over surviving runs, so infra luck never caps a player's score. Submission faults (no code block, sandbox timeout/crash, failed tests) still score 0. All 4 runs platform-errored → attempt voided, free retry, not scored. Weights shown in the UI math strip are computed over non-errored runs.
+- **Model/API failure:** retry ×2 with backoff → run errors with visible message. Platform-fault vs submission-fault rule: platform faults (API failure after retries, judge malfunction) **exclude** the run from that round's ranking — power-of-two weights renormalize over surviving runs, so infra luck never caps a player's score. Submission faults (no code block, sandbox timeout/crash, failed tests) still score 0. All 4 runs platform-errored → attempt voided, free retry, not scored. Weights shown in the UI math strip are computed over non-errored runs. A model whose round-1 run platform-errored has no conversation to continue: it is skipped in round 2 and excluded from both rounds' rankings (same treatment for a model deactivated mid-attempt). Submission-fault runs keep their conversation and proceed to round 2 normally.
 - **No code block:** run fails with hint ("try specifying output format").
 - **Sandbox containment:** no network, resource caps, timeouts; hostile code = failed tests.
 - **Anti-cheese:** raw stdout never returned to player (pass/fail + sanitized messages only); system-prompt wrapper hardens against embedded instruction attempts.
