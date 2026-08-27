@@ -7,7 +7,7 @@
 
 ## Product Thesis
 
-LeetVibeCode judges your *vibe coding* skill: the ability to write prompts that make any AI produce clean, extensible, performant code with minimal tokens. Prompts run on multiple standardized AI models; scoring is weighted toward the worst-performing model, so prompts must work universally — not just on one favorite model. Follow-up change requests measure whether the original prompt produced extensible architecture. Prompting doubles as a proxy for communication skill, making this more industry-relevant than traditional algorithmic interview prep.
+LeetVibeCode judges your *vibe coding* skill: the ability to write prompts that make any AI produce clean, extensible, performant code with minimal tokens. Prompts run on multiple standardized AI models; scoring is weighted toward the worst-performing model, so prompts must work universally — not just on one favorite model. Follow-up change requests measure whether the original prompt produced extensible architecture. Prompting doubles as a proxy for communication skill, making this more industry-relevant than traditional algorithmic interview prep. Sharply stated, the competency under measurement: **can you specify software clearly enough that multiple imperfect AI agents implement it correctly, efficiently, and maintainably — transferring engineering intent into an unreliable code-producing agent at minimum communication cost?** Positioning: a benchmark for AI-native software engineers, not "LeetCode but prompts".
 
 ## Core Loop
 
@@ -31,9 +31,9 @@ R = Accuracy × (0.7 + 0.3 × Performance)
 - Performance = `min(1, reference_time / submission_time)`, where each time is the **sum across the challenge's benchmark inputs** (larger inputs naturally dominate); any input timing out or crashing → Performance = 0. `bench.py` reports the **median of 3 timed iterations** per input to suppress scheduler noise; `reference_time` is measured at publish-CI time inside the identical container class and stored with the challenge (residual host-drift noise affects all players equally — accepted risk).
 - Multiplicative gating: fast-but-wrong = 0; correct-and-fast beats correct-and-slow by at most 30%.
 
-**Model weighting (worst weighted most):** models ranked by run score within the round, weighted as powers of two (worst ≈ 53%, then ≈ 27%, ≈ 13%, ≈ 7% for 4 models). Platform-errored runs are excluded before ranking; weights renormalize over surviving runs.
+**Model weighting (worst weighted most):** models ranked by run score within the round, weighted as powers of two (worst ≈ 53%, then ≈ 27%, ≈ 13%, ≈ 7% for 4 models). Platform-errored runs are excluded before ranking; weights renormalize over surviving runs. Deliberately CVaR-style lower-tail emphasis rather than a pure `min`: robustness dominates, but one anomalous model failure can't zero an otherwise strong attempt.
 
-**Token efficiency:** total tokens (prompt + completion, summed across all models and rounds) vs. per-challenge par budget: `token_factor = min(1, par / total)`, floored at 0.25. A modifier, never dominant. Tokens from platform-errored runs are excluded from the total — infra luck must not affect `token_factor` either (cost guards, not scoring, account for that spend).
+**Token efficiency:** total tokens (prompt + completion, summed across all models and rounds) vs. per-challenge par budget: `token_factor = min(1, par / total)`, floored at 0.25. A modifier, never dominant. Tokens from platform-errored runs are excluded from the total — infra luck must not affect `token_factor` either (cost guards, not scoring, account for that spend). No bonus below par — deliberate: compressed-gibberish prompts gain nothing, so the incentive is information efficiency, not terseness.
 
 **Round weighting:** Round 1 = 40%, Round 2 = 60% (rewards extensible architecture).
 
@@ -108,9 +108,9 @@ followup:
 
 - Brief + interface public; tests hidden. All models receive identical contracts.
 - Model selection: `challenge.yaml` lists its model roster; the global `Model.isActive` flag acts as a kill-switch filtering that roster at fan-out time (a deactivated model is skipped everywhere without touching challenge files).
-- Round 2 runs both suites — old suite passing measures extensibility mechanically.
+- Round 2 runs both suites — old suite passing measures extensibility mechanically, and defeats the round-1 overfit play (dictating a benchmark-specific monolith that passes the hidden tests).
 - Code extraction: last fenced Python block in model response; none → run fails with player-facing hint.
-- MVP content: 8 challenges across easy→hard, mixing algorithmic and small-system-design tasks.
+- MVP content: 8 challenges across easy→hard, mixing algorithmic and small-system-design tasks — authored with **deliberately conflicting engineering priorities** across the set (e.g., latency-critical no-allocations vs. simplicity-first throwaway prototype), so one memorized universal "master prompt" can't win everywhere.
 
 ## UI
 
@@ -145,6 +145,8 @@ followup:
 ## Explicitly Out of Scope (Post-MVP)
 
 - Weekly challenges / tiers with larger proprietary models (schema supports via Model.isActive + sizeTier).
+- Prompt-variance scoring: N generations per model, where low outcome variance = control rather than luck (multiplies API cost ×N).
+- Additional round types: requirement discovery (limited question budget against a deliberately underspecified brief) and diagnose-and-fix (find the seeded defect in AI output); deeper extension ladders with finer extension-cost metrics (Δcode, API breakage) — `Round.index` already supports more rounds.
 - Multi-language support (Python-only for MVP).
 - Replay sharing, share cards, social features.
 - Queue/microservice scaling beyond single host.
