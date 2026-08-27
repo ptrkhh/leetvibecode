@@ -1,3 +1,5 @@
+https://chatgpt.com/share/6a84777c-f208-83ec-81a2-c8f8ba10aad4
+
 # LeetVibeCode — MVP Design
 
 **Date:** 2026-08-22
@@ -27,10 +29,10 @@ R = Accuracy × (0.7 + 0.3 × Performance)
 ```
 
 - Accuracy = passed tests / total tests.
-- Performance = `min(1, reference_time / submission_time)` on benchmark inputs; timeout/crash → 0.
+- Performance = `min(1, reference_time / submission_time)` on benchmark inputs; timeout/crash → 0. `bench.py` reports the **median of 3 timed iterations** to suppress scheduler noise; `reference_time` is measured at publish-CI time inside the identical container class and stored with the challenge (residual host-drift noise affects all players equally — accepted risk).
 - Multiplicative gating: fast-but-wrong = 0; correct-and-fast beats correct-and-slow by at most 30%.
 
-**Model weighting (worst weighted most):** models ranked by run score within the round, weighted as powers of two (worst ≈ 53%, then ≈ 27%, ≈ 13%, ≈ 7% for 4 models).
+**Model weighting (worst weighted most):** models ranked by run score within the round, weighted as powers of two (worst ≈ 53%, then ≈ 27%, ≈ 13%, ≈ 7% for 4 models). Platform-errored runs are excluded before ranking; weights renormalize over surviving runs.
 
 **Token efficiency:** total tokens (prompt + completion, summed across all models and rounds) vs. per-challenge par budget: `token_factor = min(1, par / total)`, floored at 0.25. A modifier, never dominant.
 
@@ -90,7 +92,7 @@ challenges/rate-limiter/
   reference/solution.py # reference impl (perf baseline)
   tests/test_build.py   # hidden: initial-round suite
   tests/test_extend.py  # hidden: follow-up-round suite
-  benchmarks/bench.py   # sized inputs, timing harness
+  benchmarks/bench.py   # sized inputs, median-of-3 timing harness
 ```
 
 ```yaml
@@ -120,7 +122,7 @@ followup:
 
 ## Error Handling & Edge Cases
 
-- **Model/API failure:** retry ×2 with backoff → run errors with visible message, scores 0, attempt continues.
+- **Model/API failure:** retry ×2 with backoff → run errors with visible message. Platform-fault vs submission-fault rule: platform faults (API failure after retries, judge malfunction) **exclude** the run from that round's ranking — power-of-two weights renormalize over surviving runs, so infra luck never caps a player's score. Submission faults (no code block, sandbox timeout/crash, failed tests) still score 0. All 4 runs platform-errored → attempt voided, free retry, not scored. Weights shown in the UI math strip are computed over non-errored runs.
 - **No code block:** run fails with hint ("try specifying output format").
 - **Sandbox containment:** no network, resource caps, timeouts; hostile code = failed tests.
 - **Anti-cheese:** raw stdout never returned to player (pass/fail + sanitized messages only); system-prompt wrapper hardens against embedded instruction attempts.
