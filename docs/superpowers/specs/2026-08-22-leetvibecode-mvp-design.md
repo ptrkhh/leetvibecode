@@ -62,14 +62,16 @@ R = Accuracy × (0.7 + 0.3 × Performance)
 
 ```
 User              (id, email, name, passwordHash, createdAt)
-Challenge         (id, slug, title, description, difficulty, parTokens,
-                   followupPrompt, status, createdAt)
-Attempt           (id, userId, challengeId, startedAt, completedAt, finalScore, totalTokens)
+Challenge         (id, slug, title, description, interfaceText, difficulty,
+                   parTokens, followupPrompt, models[], referenceMs, status, createdAt)
+Attempt           (id, userId, challengeId, startedAt, completedAt, finalScore,
+                   totalTokens, status[active|completed|voided])
 Round             (id, attemptId, index [0=build, 1=extend], promptText, submittedAt)
 Model             (id, openrouterId, displayName, sizeTier, isActive)
 Run               (id, roundId, modelId, generatedCode, promptTokens,
                    completionTokens, status[pending|generating|testing|done|error],
-                   accuracy, perfScore, runScore, errorMessage)
+                   errorKind[platform|submission], accuracy, perfScore, runScore,
+                   errorMessage)
 Job               (id, runId, type[generate|test], state, claimedBy, claimedAt,
                    result, error, createdAt)
 TestResult        (id, runId, name, passed, message, runtimeMs)
