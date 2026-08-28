@@ -137,6 +137,17 @@ def test_unreadable_bench_refused(tmp_path, capsys):
     assert not (ch / "challenge.lock.json").exists()
 
 
+def test_non_utf8_file_refused_not_traceback(tmp_path, capsys):
+    # UnicodeDecodeError is not an OSError -- a distinct way a required file
+    # can be "unreadable" that a naive except OSError would miss and let
+    # escape check() as a raw traceback instead of a clean refusal.
+    ch = write_challenge(tmp_path, GOOD_ADD)
+    (ch / "benchmarks" / "bench.py").write_bytes(b"\xff\xfe garbage, not utf-8\n")
+    assert check(ch) == 1
+    assert "bench.py" in capsys.readouterr().out
+    assert not (ch / "challenge.lock.json").exists()
+
+
 def test_multiple_missing_files_all_reported(tmp_path, capsys):
     # mirrors the both-suites ruling: an author fixing a challenge wants to
     # see every missing piece in one run, not rediscover them one at a time.

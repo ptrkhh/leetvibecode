@@ -29,7 +29,7 @@ def _need(path: pathlib.Path) -> str | None:
     author running this from the CLI."""
     try:
         return path.read_text()
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         print(f"REFUSED: cannot read {path} ({e})")
         return None
 
