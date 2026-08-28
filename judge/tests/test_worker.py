@@ -81,6 +81,55 @@ def test_generate_then_test_chain_produces_facts(fixture_challenge):
     assert att["totalTokens"] == 0
 
 
+def test_round1_generate_uses_own_prior_code_and_test_includes_extend(fixture_challenge, monkeypatch):
+    # Half the two-round scoring model, previously untested: handle_generate's
+    # prior-code JOIN (round 1 must replay THIS model's own round-0 code as
+    # the assistant turn, scoped by attemptId + modelId) and handle_test's
+    # test_extend.py inclusion for round_index==1. The reviewer hand-traced
+    # both as correct; this is regression protection, not a bug hunt.
+    for t in ("generate", "test"):   # drain stale queue rows from other tests first
+        while worker.work_one(t):
+            pass
+    ids = seed_run(fixture_challenge)  # round 0 (index 0) + its Run + a "generate" Job
+    # Complete round 0 directly rather than running the real chain -- that
+    # path is already covered by the test above; this test isolates round 1's
+    # own wiring. Drop the leftover round-0 "generate" Job so it can't be
+    # claimed instead of round 1's below (FIFO would pick it first).
+    round0_code = "def add(a, b):\n    return a + b  # round0 marker\n"
+    db.q('UPDATE "Run" SET "generatedCode"=%s, status=%s WHERE id=%s', (round0_code, "done", ids["run"]))
+    db.q('DELETE FROM "Job" WHERE id=%s', (ids["job"],))
+
+    rnd1, run1, job1 = (str(uuid.uuid4()) for _ in range(3))
+    db.q('INSERT INTO "Round"(id,"attemptId",index,"promptText") VALUES (%s,%s,1,%s)',
+         (rnd1, ids["att"], "extend it"))
+    db.q('INSERT INTO "Run"(id,"roundId","modelId") VALUES (%s,%s,%s)', (run1, rnd1, ids["mdl"]))
+    db.q('INSERT INTO "Job"(id,"runId",type) VALUES (%s,%s,%s)', (job1, run1, "generate"))
+
+    # OPENROUTER_MOCK ignores the messages it's given (always returns the
+    # reference solution), so the only way to observe what handle_generate
+    # actually built is to spy on the call, not on generate()'s return value.
+    captured = {}
+    real_generate = worker.generate
+
+    def spy_generate(openrouter_id, messages, slug):
+        captured["messages"] = messages
+        return real_generate(openrouter_id, messages, slug)
+
+    monkeypatch.setattr(worker, "generate", spy_generate)
+    worker.work_one("generate")
+
+    assistant_turns = [m["content"] for m in captured["messages"] if m["role"] == "assistant"]
+    assert assistant_turns and round0_code in assistant_turns[0]  # this model's own round-0 code, not a placeholder
+
+    worker.work_one("test")
+    tests = db.q('SELECT name, passed FROM "TestResult" WHERE "runId"=%s', (run1,))
+    names = {t["name"].split("::")[-1] for t in tests}
+    assert names == {"test_add", "test_neg"}  # test_build.py AND test_extend.py both ran
+    assert all(t["passed"] for t in tests)
+    run1_row = db.q('SELECT status, "errorKind" FROM "Run" WHERE id=%s', (run1,))[0]
+    assert run1_row["status"] == "done" and run1_row["errorKind"] is None
+
+
 def _seed_jobs(job_type, n):
     """Lean seed for n Jobs of job_type, each on its own Run (sharing one
     user/challenge/attempt/round/model chain -- irrelevant to a queue test).
@@ -170,6 +219,56 @@ def test_crashed_handler_fails_the_run_and_finishes_the_job_not_stuck(monkeypatc
     monkeypatch.setitem(worker.HANDLERS, job_type, lambda run_id: None)
     assert worker.work_one(job_type) is True
     assert db.q('SELECT state FROM "Job" WHERE "runId"=%s', (good_run,))[0]["state"] == "done"
+
+
+def test_loop_survives_when_the_recovery_write_itself_raises(monkeypatch):
+    # R42: work_one's except block calls _fail then db.finish_job(error=...),
+    # and NEITHER call is itself protected -- the test above only proves
+    # work_one survives a handler crash when recording that failure SUCCEEDS.
+    # If the same DB blip that made the handler raise also makes the recovery
+    # write raise, that second exception used to propagate out of work_one,
+    # through _loop, and silently kill that daemon thread forever (a raised
+    # daemon thread just stops -- nothing restarts it), leaving the Run
+    # non-terminal and the Job stuck "claimed" (no stale-claim reclaim exists
+    # anywhere in the judge). _loop itself -- not work_one -- must guard the
+    # iteration, so drive this through a real _loop thread, not work_one
+    # directly.
+    job_type = f"doublefault-{uuid.uuid4().hex[:8]}"
+    bad_run, good_run = _seed_jobs(job_type, 2)  # FIFO: bad_run claimed first
+
+    def boom(run_id):
+        raise RuntimeError("handler exploded")
+
+    monkeypatch.setitem(worker.HANDLERS, job_type, boom)
+
+    real_fail = worker._fail
+    calls = {"n": 0}
+
+    def flaky_fail(run_id, kind, message):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("recovery write also failed")  # the DB blip hits recovery too
+        real_fail(run_id, kind, message)
+
+    monkeypatch.setattr(worker, "_fail", flaky_fail)
+
+    t = threading.Thread(target=worker._loop, args=(job_type,), daemon=True)
+    t.start()
+    # the bad job's own recovery write raises -- if _loop dies there, good_run
+    # never gets claimed at all; poll instead of a fixed sleep since the fix
+    # paces failed iterations with the same 1s the empty-queue path already uses
+    deadline = time.time() + 10
+    good_done = False
+    while time.time() < deadline:
+        rows = db.q('SELECT state FROM "Job" WHERE "runId"=%s', (good_run,))
+        if rows and rows[0]["state"] == "done":
+            good_done = True
+            break
+        time.sleep(0.05)
+
+    assert t.is_alive()  # the thread is still looping, not dead from the propagated exception
+    assert good_done  # ... and it kept processing jobs afterward, not just technically alive
+    assert calls["n"] >= 1  # the flaky recovery path was actually exercised
 
 
 @pytest.fixture()

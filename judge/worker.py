@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 import threading
@@ -9,6 +10,8 @@ from benching import run_bench
 from extract import extract_code
 from openrouter import PlatformError, build_messages, generate
 from testing import run_tests
+
+logger = logging.getLogger(__name__)
 
 
 def _load_run(run_id: str) -> dict:
@@ -45,7 +48,7 @@ def handle_generate(run_id: str) -> None:
               AND r."modelId" = (SELECT "modelId" FROM "Run" WHERE id = %s)''',
             (ctx["attemptId"], run_id))
         # submission-fault round-0 runs proceed with an empty-code conversation
-        prior_code = rows[0]["generatedCode"] or "# no code block was produced in round 1"
+        prior_code = rows[0]["generatedCode"] or "# no code block was produced in round 0"
         round0_prompt = rows[0]["promptText"]
     else:
         round0_prompt = ctx["promptText"]
@@ -113,8 +116,20 @@ def work_one(job_type: str) -> bool:
 
 
 def _loop(job_type: str) -> None:
+    # R42: work_one's own except block (_fail, db.finish_job) is unprotected --
+    # if the same DB blip that fails a handler also fails recording that
+    # failure, the exception used to propagate out of work_one and kill this
+    # daemon thread forever (nothing restarts a dead daemon thread), leaving
+    # its Run non-terminal and its Job stuck "claimed" (no stale-claim reclaim
+    # exists in the judge). One iteration must never be able to end the loop.
+    # Reuse the existing empty-queue sleep as the pacing for a failed
+    # iteration too, rather than inventing separate backoff.
     while True:
-        if not work_one(job_type):
+        try:
+            if not work_one(job_type):
+                time.sleep(1)
+        except Exception:
+            logger.exception("worker loop iteration failed (job_type=%s)", job_type)
             time.sleep(1)
 
 
