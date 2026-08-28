@@ -13,7 +13,17 @@ const DUMMY_HASH = hashSync("no-such-user", 10);
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
-  pages: { signIn: "/login" },
+  // R61: signIn() is TWO sequential HTTP calls -- getProviders() then the
+  // credentials POST -- and next-auth's fetchData swallows a fetch failure on
+  // the first leg, resolving to null instead of rejecting. _signIn() then does
+  // a hard window.location.href to /api/auth/error, so a connection drop there
+  // is a NAVIGATION, not a rejection: no .catch() in this codebase can see it.
+  // Without an error page configured the user lands on next-auth's stock one,
+  // whose entire body is "Error Error <host>" -- no nav, no way back, and in
+  // the register case the account has already been created. Pointing it at
+  // /login turns that dead end into the app's own page, which is exactly where
+  // a user whose account exists needs to be.
+  pages: { signIn: "/login", error: "/login" },
   providers: [
     Credentials({
       credentials: { email: {}, password: {} },

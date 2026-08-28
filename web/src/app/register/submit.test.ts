@@ -60,11 +60,34 @@ describe("submitRegistration: the registration failed", () => {
 // escapes the submit handler as an unhandled rejection -- no message, button
 // still enabled, nothing for the user to act on.
 describe("submitRegistration: the network failed", () => {
-  it("reports a rejected fetch instead of throwing, and never signs in", async () => {
+  // R62: a rejected fetch does not prove nothing was created -- the server can
+  // commit and then lose the socket before the response is relayed. So the
+  // catch probes instead of concluding, and "try again" is only reached once
+  // the probe has established there is no account to sign in to.
+  it("reports a rejected fetch instead of throwing, once the probe finds no account", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    signInMock.mockResolvedValueOnce({ ok: false, error: "CredentialsSignin" });
 
     await expect(submitRegistration(FIELDS)).resolves.toBe("network error, try again");
-    expect(signInMock).not.toHaveBeenCalled();
+    expect(signInMock).toHaveBeenCalledWith("credentials", {
+      email: FIELDS.email, password: FIELDS.password, redirect: false,
+    });
+  });
+
+  it("signs the user in anyway when the row WAS committed before the socket died", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    signInMock.mockResolvedValueOnce({ ok: true, error: null });
+
+    // Not a message: the account exists and the user is now signed in, which
+    // is a better outcome than the most honest possible error text.
+    await expect(submitRegistration(FIELDS)).resolves.toBeNull();
+  });
+
+  it("still reports a network error when the probe itself rejects", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    signInMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    await expect(submitRegistration(FIELDS)).resolves.toBe("network error, try again");
   });
 
   // The account exists by now, so "try again" would walk the user into a

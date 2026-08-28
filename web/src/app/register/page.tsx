@@ -22,9 +22,16 @@ export default function Register() {
         // tell a user whose account was just created that the email is taken.
         setBusy(true);
         const message = await submitRegistration({ name, email, password });
-        setBusy(false);
-        if (message) setError(message);
-        else {
+        // R63: only the error branch re-enables. Clearing it before the
+        // client-side navigation lands leaves a window in which a re-submit
+        // races the first request -- reproduced at 1.3ms with a
+        // MutationObserver, two real POSTs, the second answering "email
+        // already registered" to the user whose account the first had just
+        // created. On success this component is about to be unmounted.
+        if (message) {
+          setBusy(false);
+          setError(message);
+        } else {
           router.push("/");
           router.refresh();
         }

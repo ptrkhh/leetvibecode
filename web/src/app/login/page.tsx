@@ -24,13 +24,19 @@ export default function Login() {
         // escapes as an unhandled rejection and the form goes silent.
         const res = await signIn("credentials", { email, password, redirect: false })
           .catch(() => null);
-        setBusy(false);
         // One message for both "no such account" and "wrong password": the
         // login path is not an account-existence oracle (R45 paid for a dummy
         // bcrypt compare to close the timing half of the same hole).
-        if (!res) setError("network error, try again");
-        else if (!res.ok) setError("wrong email or password");
-        else {
+        const message = !res
+          ? "network error, try again"
+          : res.ok
+            ? null
+            : "wrong email or password";
+        // R63: see register/page.tsx -- only the error branch re-enables.
+        if (message) {
+          setBusy(false);
+          setError(message);
+        } else {
           router.push("/");
           // The nav's session comes from SessionProvider, which signIn already
           // refreshed; this refetches the SERVER render so personal bests

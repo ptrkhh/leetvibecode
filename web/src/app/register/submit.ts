@@ -23,6 +23,15 @@ export async function submitRegistration(body: {
   email: string;
   password: string;
 }): Promise<string | null> {
+  // Used on both failure paths below, so the probe and the ordinary sign-in
+  // cannot drift apart.
+  const trySignIn = () =>
+    signIn("credentials", {
+      email: body.email,
+      password: body.password,
+      redirect: false,
+    }).catch(() => null);
+
   let res: Response;
   try {
     res = await fetch("/api/register", {
@@ -31,11 +40,15 @@ export async function submitRegistration(body: {
       body: JSON.stringify(body),
     });
   } catch {
-    // A dropped connection or a backend restart mid-request rejects the fetch
-    // itself. Unwrapped it escapes as an unhandled rejection: no message, an
-    // enabled button, and a user with no way to tell whether anything
-    // happened. Nothing was created, so "try again" is honest advice.
-    return "network error, try again";
+    // R62: a rejected fetch does NOT mean nothing was created. The server can
+    // commit the row and then have the socket die before a byte of the
+    // response is relayed -- reproduced against this route with a forwarding
+    // proxy, and the account existed. The client cannot distinguish that from
+    // a request that never arrived, so it does not guess: it asks. If the
+    // account exists the probe signs the user in and they proceed normally,
+    // which beats any message; if it does not, the probe fails and "try again"
+    // is accurate.
+    return (await trySignIn())?.ok ? null : "network error, try again";
   }
   if (!res.ok) {
     // A 500 or a proxy error page has no JSON body; .catch keeps that from
@@ -47,10 +60,5 @@ export async function submitRegistration(body: {
   // produce "try again" -- that walks the user into a permanent 409. A
   // rejection collapses into the same branch as a refused sign-in, whose
   // message ("log in") is the correct advice either way.
-  const signedIn = await signIn("credentials", {
-    email: body.email,
-    password: body.password,
-    redirect: false,
-  }).catch(() => null);
-  return signedIn?.ok ? null : "account created — please log in";
+  return (await trySignIn())?.ok ? null : "account created — please log in";
 }
