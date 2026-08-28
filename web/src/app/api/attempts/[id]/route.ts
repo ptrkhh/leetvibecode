@@ -130,10 +130,32 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const allTerminal = (r: typeof r0) =>
     !!r && r.runs.length > 0 && r.runs.every((x) => TERMINAL.includes(x.status));
   if (attempt.status === "active" && allTerminal(r0) && allTerminal(r1)) {
-    const toScored = (r: NonNullable<typeof r0>) => r.runs.map((x) => ({
+    const toScored = (runs: NonNullable<typeof r0>["runs"]) => runs.map((x) => ({
       errorKind: x.errorKind, score: x.runScore ?? 0,
       promptTokens: x.promptTokens ?? 0, completionTokens: x.completionTokens ?? 0 }));
-    const out = scoreAttempt(toScored(r0!), toScored(r1!), attempt.challenge.parTokens);
+    // R10/R53: spec L126 -- a model with no round-1 run at all (deactivated
+    // mid-attempt by the isActive kill-switch, or platform-errored in round 0
+    // and therefore skipped at round-1 fan-out) is excluded from BOTH rounds'
+    // rankings, not just from round 1's. Filtered here rather than inside
+    // scoreAttempt because which runs are ELIGIBLE is a different concern
+    // from how eligible runs are WEIGHTED, and eligibility already lives at
+    // this boundary (fanout.ts owns the round-2 roster).
+    //
+    // Keyed on a round-1 run EXISTING, never on it surviving: a model that
+    // platform-errored in round 1 did run, and its round-0 score was
+    // legitimately earned -- dropping that would let infra luck cap a score,
+    // which is exactly what the platform/submission split exists to prevent.
+    // openrouterId is Model's unique column, so it is the same identity the
+    // modelId FK carries, and it is already selected -- no wider payload.
+    //
+    // A dropped run's tokens leave totalTokens too, for free, since it never
+    // reaches scoreAttempt: a mid-attempt deactivation is a platform-side
+    // decision the player did not cause, so charging them its tokens would
+    // lower their token_factor for someone else's action.
+    const ranR1 = new Set(r1!.runs.map((x) => x.model.openrouterId));
+    const out = scoreAttempt(
+      toScored(r0!.runs.filter((x) => ranR1.has(x.model.openrouterId))),
+      toScored(r1!.runs), attempt.challenge.parTokens);
     // updateMany, not update: reading status above and writing it here are
     // not atomic, and the dashboard polls this endpoint every 2s, so two
     // overlapping polls both reach this line. Scoping the write to the

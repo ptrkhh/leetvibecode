@@ -406,3 +406,71 @@ describe("GET /api/attempts/[id]: completion", () => {
     },
   );
 });
+
+// R10/R53 (spec L126): "A model whose round-1 run platform-errored ... is
+// skipped in round 2 and excluded from both rounds' rankings (same treatment
+// for a model deactivated mid-attempt)." The rule is keyed on a round-1 run
+// EXISTING, and all three neighbouring cases are pinned separately because
+// the two no-op ones are how a wrong version of this filter shows up.
+describe("GET /api/attempts/[id]: R10 — a model with no round-1 run leaves both rankings", () => {
+  const mrun = (m: string, score: number | null, errorKind: string | null = null) =>
+    run({
+      id: `${m}-${errorKind ?? score}`,
+      model: { displayName: m, openrouterId: m },
+      status: errorKind ? "error" : "done",
+      errorKind, runScore: score, accuracy: score ?? 0, perfScore: 1,
+      tests: [], benchmarks: [],
+    });
+  const twoRounds = (r0: unknown[], r1: unknown[]) =>
+    attempt([{ index: 0, runs: r0 }, { index: 1, runs: r1 }]);
+  const completion = () => updateAttempt.mock.calls[0][0].data;
+
+  // The ONLY behaviour R10 changes. Without it round 0 ranks [0, 1.0] with
+  // the 0 taking 2/3 of the weight -> 1/3, and the deactivated model's 500
+  // tokens count against the player's token_factor.
+  it("drops a mid-attempt-deactivated model's round-0 run from the ranking and from totalTokens", async () => {
+    findAttempt.mockResolvedValue(twoRounds(
+      [mrun("kept", 1.0), mrun("deactivated", 0)],
+      [mrun("kept", 1.0)],
+    ));
+
+    await req("a1");
+
+    expect(completion().status).toBe("completed");
+    expect(completion().finalScore).toBeCloseTo(100, 4); // ranks "kept" alone, not [0, 1.0]
+    expect(completion().totalTokens).toBe(1000);         // the dropped run's 500 excluded
+  });
+
+  // Neighbour 1: already excluded by the survivor filter. R10 must be a
+  // no-op here, not a second exclusion that empties round 0 and voids a
+  // perfectly scorable attempt.
+  it("is a no-op for a model that platform-errored in round 0, not a double exclusion", async () => {
+    findAttempt.mockResolvedValue(twoRounds(
+      [mrun("dead", null, "platform"), mrun("ok", 1.0)],
+      [mrun("ok", 1.0)],
+    ));
+
+    await req("a1");
+
+    expect(completion().status).toBe("completed"); // NOT voided
+    expect(completion().finalScore).toBeCloseTo(100, 4);
+    expect(completion().totalTokens).toBe(1000);   // platform-errored spend already excluded
+  });
+
+  // Neighbour 2: the case most likely to break. "b" has a round-1 run -- it
+  // just platform-errored -- so its round-0 score stands. Written against
+  // round-1 SURVIVORS instead of round-1 RUNS, "b" would lose a round-0
+  // score it legitimately earned and the assertion below would read 100.
+  it("keeps the round-0 run of a model that platform-errored in round 1", async () => {
+    findAttempt.mockResolvedValue(twoRounds(
+      [mrun("a", 1.0), mrun("b", 0.5)],
+      [mrun("a", 1.0), mrun("b", null, "platform")],
+    ));
+
+    await req("a1");
+
+    // round 0 still ranks BOTH: worst-weighted 0.5×2/3 + 1.0×1/3 = 2/3
+    expect(completion().finalScore).toBeCloseTo((0.4 * (2 / 3) + 0.6 * 1) * 100, 4);
+    expect(completion().totalTokens).toBe(1500); // a0 + b0 + a1; b's round-1 spend excluded
+  });
+});
