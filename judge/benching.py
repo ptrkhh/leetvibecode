@@ -22,4 +22,11 @@ def run_bench(code: str, bench_py: str):
     raw = r.files.get("bench.json")
     if not raw:
         return [{"inputSize": 0, "timeMs": 0, "memoryMb": None, "timedOut": True}], "benchmark crashed", None
-    return json.loads(raw), None, None
+    try:
+        return json.loads(raw), None, None
+    except Exception:
+        # R38: bench.json is untrusted content (hostile OR just corrupted) --
+        # any way parsing it blows up must land here as a submission_error,
+        # not escape and crash the judge. Mirrors testing.py's R35 guard
+        # around parse_junit.
+        return [{"inputSize": 0, "timeMs": 0, "memoryMb": None, "timedOut": True}], "benchmark produced unreadable results", None

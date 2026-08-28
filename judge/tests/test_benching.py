@@ -29,6 +29,24 @@ def test_run_bench_platform_error_is_not_converted_to_submission_error(monkeypat
     assert plat_err == "sandbox infrastructure failure: boom"
 
 
+def test_run_bench_malformed_json_becomes_submission_error(monkeypatch):
+    # R38: bench.json is untrusted content (hostile OR just corrupted) --
+    # json.loads blowing up on it must land here as a submission_error, not
+    # escape run_bench uncaught. Mirrors testing.py's R35 guard around
+    # parse_junit. Pure -- no daemon needed (the reviewer's live repro
+    # against the real sandbox, a solution.py writing "not valid json {{{"
+    # then os._exit(0), is reproduced here via the same fake bench.json
+    # content instead of a live container).
+    def fake_run_sandbox(files, cmd, timeout_s=30, keep=()):
+        return runner.SandboxResult(0, False, {"bench.json": "not valid json {{{"}, None)
+
+    monkeypatch.setattr(benching, "run_sandbox", fake_run_sandbox)
+    rows, sub_err, plat_err = run_bench("code", BENCH)
+    assert rows == [{"inputSize": 0, "timeMs": 0, "memoryMb": None, "timedOut": True}]
+    assert sub_err
+    assert plat_err is None
+
+
 @pytest.mark.docker
 def test_bench_reports_median_rows_per_size():
     rows, sub_err, plat_err = run_bench("def total(xs):\n    return sum(xs)\n", BENCH)
@@ -76,20 +94,23 @@ def setup(size):
     return None
 def run(data):
     _n[0] += 1
-    solution.spin(1.2 if _n[0] == 1 else 0.0)
+    n = _n[0]
+    solution.spin(1.2 if n == 1 else 0.03 if n == 2 else 0.0)
 """
 
 
 @pytest.mark.docker
 def test_bench_uses_median_of_three_not_mean():
-    # bench.py's run() sleeps 1.2s on the FIRST of the 3 real iterations for
-    # this size and ~0s on the other two (a module-level counter proves all
-    # three iterations actually execute, not one measurement reused).
-    # median([~1200, ~0, ~0]) ~= a few ms; mean of the same three would be
-    # ~400ms. Asserting well under the mean-only value proves the reported
-    # time is the median of three real timed iterations, not their mean and
-    # not a single iteration's time.
+    # R39: the three real iterations for this size get three DISTINCT
+    # durations (~1200ms, ~30ms, ~0ms -- a module-level counter proves all
+    # three genuinely ran, not one measurement reused), so median (~30ms),
+    # min (~0ms) and mean (~410ms) are all different values. An earlier
+    # version of this test used [~1200, ~0, ~0], where min == median --
+    # the reviewer proved that version passed even with statistics.median
+    # swapped for min() in the harness, i.e. it couldn't actually catch a
+    # regression to min(). The tight window below sits around the expected
+    # median only: min's ~0ms falls below it, mean's ~410ms falls above it.
     solution_code = "import time\ndef spin(seconds):\n    if seconds:\n        time.sleep(seconds)\n"
     rows, sub_err, plat_err = run_bench(solution_code, MEDIAN_BENCH)
     assert sub_err is None and plat_err is None
-    assert rows[0]["timeMs"] < 150
+    assert 20 <= rows[0]["timeMs"] <= 100
