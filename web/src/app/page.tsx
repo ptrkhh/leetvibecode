@@ -9,6 +9,11 @@ export default async function Home() {
   // to each row, so nothing here is O(n^2) and no challenge id reaches the
   // markup.
   const challenges = await listChallengesWithBests(session?.user.id);
+  // R59: reachable on a fresh deployment before the seed has run -- exactly
+  // the order Task 24's runbook walks an operator through. A blank page there
+  // reads as a broken app rather than as an empty one.
+  if (challenges.length === 0)
+    return <p className="text-gray-600">No challenges published yet.</p>;
   return (
     <ul className="grid gap-4 sm:grid-cols-2">
       {challenges.map((c) => (

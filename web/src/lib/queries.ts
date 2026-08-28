@@ -4,9 +4,18 @@
 // instead of re-issuing the Prisma query inline in four places.
 import { prisma } from "./db";
 
+// R59: the ONE definition of what counts as a publicly visible challenge.
+// listPublishedChallenges (the API list) and listChallengesWithBests (the home
+// page) are different queries with different consumers, so nothing here is
+// duplicated -- but they must never disagree about which challenges exist. If
+// this predicate ever narrows (an archived status, a visibility flag), it
+// narrows for the detail and leaderboard lookups too, rather than leaving a
+// challenge that is unlistable but still reachable by direct URL.
+const PUBLISHED = { status: "published" };
+
 export function listPublishedChallenges() {
   return prisma.challenge.findMany({
-    where: { status: "published" },
+    where: PUBLISHED,
     select: { slug: true, title: true, difficulty: true, parTokens: true },
     orderBy: { createdAt: "asc" },
   });
@@ -30,7 +39,7 @@ export type ChallengeDetail = {
 // leak them either.
 export async function getPublishedChallenge(slug: string): Promise<ChallengeDetail | null> {
   const c = await prisma.challenge.findUnique({
-    where: { slug, status: "published" },
+    where: { slug, ...PUBLISHED },
     select: {
       slug: true, title: true, description: true, interfaceText: true,
       difficulty: true, parTokens: true, models: true,
@@ -66,7 +75,7 @@ export async function getLeaderboard(
   slug: string,
 ): Promise<{ title: string; rows: LeaderboardRow[] } | null> {
   const c = await prisma.challenge.findUnique({
-    where: { slug, status: "published" },
+    where: { slug, ...PUBLISHED },
     select: { id: true, title: true },
   });
   if (!c) return null;
@@ -173,7 +182,7 @@ export type ChallengeListing = {
 // the other side.
 export async function listChallengesWithBests(userId?: string): Promise<ChallengeListing[]> {
   const challenges = await prisma.challenge.findMany({
-    where: { status: "published" },
+    where: PUBLISHED,
     select: { id: true, slug: true, title: true, difficulty: true, parTokens: true },
     orderBy: { createdAt: "asc" },
   });
