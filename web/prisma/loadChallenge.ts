@@ -43,7 +43,7 @@ export function loadChallengeDir(dir: string): LoadResult {
     if (
       typeof y.slug !== "string" || typeof y.title !== "string" ||
       typeof y.brief !== "string" || typeof y.interface !== "string" ||
-      typeof y.difficulty !== "string" || typeof y.parTokens !== "number" ||
+      typeof y.difficulty !== "string" || !Number.isInteger(y.parTokens) ||
       typeof y.followup?.prompt !== "string" || !Array.isArray(y.models) ||
       typeof referenceMs !== "number"
     ) {

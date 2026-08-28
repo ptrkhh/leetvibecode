@@ -100,4 +100,14 @@ describe("loadChallengeDir", () => {
 
     expect(loadChallengeDir(dir)).toMatchObject({ ok: false, reason: "error" });
   });
+
+  // R48-review followup: Postgres silently truncates a non-integer parTokens
+  // (e.g. 100.5 -> 100) with no warning -- a plausible authoring typo must be
+  // caught here, before it ever reaches the DB.
+  it("reports an error when parTokens is not an integer", () => {
+    write("challenge.yaml", VALID_YAML.replace("parTokens: 100", "parTokens: 100.5"));
+    write("challenge.lock.json", JSON.stringify({ referenceMs: 1 }));
+
+    expect(loadChallengeDir(dir)).toMatchObject({ ok: false, reason: "error" });
+  });
 });
