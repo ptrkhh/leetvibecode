@@ -1,7 +1,15 @@
-import { compare } from "bcryptjs";
+import { compare, hashSync } from "bcryptjs";
 import type { NextAuthOptions } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "./db";
+
+// R45: fixed dummy hash (same cost factor, 10, as register/route.ts's real
+// `hash(password, 10)`) so a lookup miss still pays a bcrypt compare.
+// Without this, "no such user" answers measurably faster than "wrong
+// password" over the network — an account-existence timing oracle even
+// though both responses are otherwise identical. Generated once at module
+// scope, not per-request.
+const DUMMY_HASH = hashSync("no-such-user", 10);
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
@@ -12,7 +20,8 @@ export const authOptions: NextAuthOptions = {
       async authorize(creds) {
         if (!creds?.email || !creds.password) return null;
         const user = await prisma.user.findUnique({ where: { email: creds.email } });
-        if (!user || !(await compare(creds.password, user.passwordHash))) return null;
+        const passwordOk = await compare(creds.password, user?.passwordHash ?? DUMMY_HASH);
+        if (!user || !passwordOk) return null;
         return { id: user.id, email: user.email, name: user.name };
       },
     }),

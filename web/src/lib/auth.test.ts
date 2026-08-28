@@ -1,4 +1,4 @@
-import { hashSync } from "bcryptjs";
+import { compare, hashSync } from "bcryptjs";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,8 +6,18 @@ vi.mock("./db", () => ({
   prisma: { user: { findUnique: vi.fn() } },
 }));
 
+// Wrap the real compare in a vi.fn so we can assert it was *called* (R45: the
+// no-user path must still pay the bcrypt cost) without faking its result —
+// every other test in this file still needs real hash/compare behaviour.
+vi.mock("bcryptjs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("bcryptjs")>();
+  return { ...actual, compare: vi.fn(actual.compare) };
+});
+
 import { prisma } from "./db";
 import { authOptions } from "./auth";
+
+const compareSpy = vi.mocked(compare);
 
 // next-auth's Credentials() factory hardcodes `authorize: () => null` on the object
 // it returns and stashes the real function we pass in under `.options.authorize`;
@@ -23,6 +33,7 @@ const findUnique = prisma.user.findUnique as unknown as Mock;
 
 beforeEach(() => {
   findUnique.mockReset();
+  compareSpy.mockClear();
 });
 
 describe("authorize", () => {
@@ -42,6 +53,13 @@ describe("authorize", () => {
     findUnique.mockResolvedValueOnce(null);
     const result = await authorize({ email: "nobody@b.io", password: "whatever1" });
     expect(result).toBeNull();
+  });
+
+  it("still runs a bcrypt compare when no user exists, so the miss isn't cheaper (no timing oracle)", async () => {
+    findUnique.mockResolvedValueOnce(null);
+    const result = await authorize({ email: "nobody@b.io", password: "whatever1" });
+    expect(result).toBeNull();
+    expect(compareSpy).toHaveBeenCalledTimes(1);
   });
 
   it("returns null when the password does not match the stored hash", async () => {
