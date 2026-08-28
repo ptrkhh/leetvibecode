@@ -22,7 +22,7 @@ def make_job(job_type="generate"):
 def test_claim_returns_pending_job_and_marks_claimed():
     jobid, runid = make_job()
     job = db.claim_job("generate", "w1")
-    assert job is not None and job["runId"]
+    assert job is not None and job["id"] == jobid and job["runId"]
     rows = db.q('SELECT state,"claimedBy" FROM "Job" WHERE id=%s', (job["id"],))
     assert rows[0]["state"] == "claimed" and rows[0]["claimedBy"] == "w1"
 
@@ -30,10 +30,17 @@ def test_claim_returns_pending_job_and_marks_claimed():
 def test_claim_is_type_scoped_and_finish_completes():
     # unique type string isolates this test from any leftover queue rows
     unique_type = f"t-{uuid.uuid4().hex[:8]}"
+    other_type = f"other-{unique_type}"
     assert db.claim_job(unique_type, "w") is None
+    # other_type job created first (FIFO-earliest) so it would be wrongly claimed
+    # below if the type filter were ever dropped from CLAIM_SQL
+    other_jobid, _ = make_job(other_type)
     make_job(unique_type)
     job = db.claim_job(unique_type, "w2")
     assert job is not None
     db.finish_job(job["id"])
     assert db.q('SELECT state FROM "Job" WHERE id=%s', (job["id"],))[0]["state"] == "done"
     assert db.claim_job(unique_type, "w2") is None  # nothing left of that type
+    # the other-typed job must have been left untouched by the claims above
+    other_job = db.claim_job(other_type, "w3")
+    assert other_job is not None and other_job["id"] == other_jobid
