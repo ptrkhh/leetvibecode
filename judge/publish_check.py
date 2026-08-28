@@ -9,10 +9,15 @@ challenge and the leaderboard (the seed task refuses to publish without the
 lock file this script writes).
 
 Usage: python publish_check.py <challenge-dir>
-Exit 0 on success (challenge.lock.json written). Exit 1 with a reason
-printed otherwise -- either the challenge is bad (REFUSED) or the judge
-itself couldn't run the check (PLATFORM ERROR); these are never conflated,
-so an author never chases a phantom content bug caused by a Docker hiccup.
+Exit 0 on success (challenge.lock.json written). Exit 1 when the challenge
+itself is bad (REFUSED: a suite fails, the benchmark times out or defines no
+SIZES, or the directory is malformed/unreadable). Exit 2 when the checker
+itself couldn't run (PLATFORM ERROR: a platform_error from the test or bench
+phase, e.g. Docker unavailable) -- never the challenge's fault. R43: a CI
+pipeline can then retry on 2 and fail the build on 1, so the distinction is
+actionable, not just readable; an author never chases a phantom content bug
+caused by a Docker hiccup, and a broken challenge never limps through
+disguised as a retry-me infra blip.
 """
 import json
 import pathlib
@@ -61,7 +66,7 @@ def check(challenge_dir: pathlib.Path) -> int:
         # The judge itself broke (Docker/sandbox infra) -- not a verdict on
         # the challenge's content. Must never be printed as "REFUSED".
         print(f"PLATFORM ERROR: reference test phase could not run ({plat_err})")
-        return 1
+        return 2
     if sub_err or not results or not all(t["passed"] for t in results):
         failed = [t["name"] for t in results if not t["passed"]]
         print(f"REFUSED: reference does not pass its own suites ({sub_err or failed})")
@@ -70,7 +75,7 @@ def check(challenge_dir: pathlib.Path) -> int:
     rows, sub_err, plat_err = run_bench(code, bench_py)
     if plat_err:
         print(f"PLATFORM ERROR: reference benchmark could not run ({plat_err})")
-        return 1
+        return 2
     if sub_err or any(r["timedOut"] for r in rows):
         print(f"REFUSED: reference benchmark failed ({sub_err or 'timed out'})")
         return 1

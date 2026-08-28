@@ -79,10 +79,13 @@ def test_empty_sizes_refused(tmp_path):
 # ---- platform_error must never be reported as a bad challenge (no Docker: mocked) ----
 
 def test_platform_error_in_tests_distinguished(tmp_path, monkeypatch, capsys):
+    # R43: platform_error exits 2 (not 1) so a CI pipeline can retry on 2
+    # and fail the build on 1 -- the distinction is only actionable if
+    # something can branch on the exit code, not just read the message.
     ch = write_challenge(tmp_path, GOOD_ADD)
     monkeypatch.setattr(publish_check, "run_tests",
                          lambda code, suites: ([], None, "sandbox infrastructure failure: boom"))
-    assert check(ch) == 1
+    assert check(ch) == 2
     out = capsys.readouterr().out
     assert "PLATFORM ERROR" in out
     assert "REFUSED" not in out
@@ -90,12 +93,13 @@ def test_platform_error_in_tests_distinguished(tmp_path, monkeypatch, capsys):
 
 
 def test_platform_error_in_bench_distinguished(tmp_path, monkeypatch, capsys):
+    # R43: same contract, bench-phase platform_error.
     ch = write_challenge(tmp_path, GOOD_ADD)
     monkeypatch.setattr(publish_check, "run_tests",
                          lambda code, suites: (FAKE_PASSING_RESULTS, None, None))
     monkeypatch.setattr(publish_check, "run_bench",
                          lambda code, bench_py: ([], None, "sandbox infrastructure failure: boom"))
-    assert check(ch) == 1
+    assert check(ch) == 2
     out = capsys.readouterr().out
     assert "PLATFORM ERROR" in out
     assert "REFUSED" not in out
