@@ -1,4 +1,4 @@
-import { signIn } from "next-auth/react";
+import { signInCredentials } from "../../lib/sign-in";
 
 // Returns null when the user is registered AND signed in, otherwise the
 // message to show. Extracted from the page so the failure paths are testable
@@ -23,15 +23,6 @@ export async function submitRegistration(body: {
   email: string;
   password: string;
 }): Promise<string | null> {
-  // Used on both failure paths below, so the probe and the ordinary sign-in
-  // cannot drift apart.
-  const trySignIn = () =>
-    signIn("credentials", {
-      email: body.email,
-      password: body.password,
-      redirect: false,
-    }).catch(() => null);
-
   let res: Response;
   try {
     res = await fetch("/api/register", {
@@ -48,7 +39,7 @@ export async function submitRegistration(body: {
     // account exists the probe signs the user in and they proceed normally,
     // which beats any message; if it does not, the probe fails and "try again"
     // is accurate.
-    return (await trySignIn())?.ok ? null : "network error, try again";
+    return (await signInCredentials(body.email, body.password))?.ok ? null : "network error, try again";
   }
   if (!res.ok) {
     // A 500 or a proxy error page has no JSON body; .catch keeps that from
@@ -60,5 +51,5 @@ export async function submitRegistration(body: {
   // produce "try again" -- that walks the user into a permanent 409. A
   // rejection collapses into the same branch as a refused sign-in, whose
   // message ("log in") is the correct advice either way.
-  return (await trySignIn())?.ok ? null : "account created — please log in";
+  return (await signInCredentials(body.email, body.password))?.ok ? null : "account created — please log in";
 }

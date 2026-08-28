@@ -1,8 +1,8 @@
 "use client";
-import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { signInCredentials } from "../../lib/sign-in";
 
 export default function Login() {
   const router = useRouter();
@@ -22,8 +22,9 @@ export default function Login() {
         setBusy(true);
         // signIn fetches; a dropped connection rejects it. Unwrapped that
         // escapes as an unhandled rejection and the form goes silent.
-        const res = await signIn("credentials", { email, password, redirect: false })
-          .catch(() => null);
+        // R64: guarded -- a bare signIn() hard-navigates out of the app when
+        // its providers fetch fails, taking the typed credentials with it.
+        const res = await signInCredentials(email, password);
         // One message for both "no such account" and "wrong password": the
         // login path is not an account-existence oracle (R45 paid for a dummy
         // bcrypt compare to close the timing half of the same hole).

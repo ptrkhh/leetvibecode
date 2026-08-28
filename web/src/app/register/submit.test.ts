@@ -1,12 +1,12 @@
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next-auth/react", () => ({ signIn: vi.fn() }));
+vi.mock("../../lib/sign-in", () => ({ signInCredentials: vi.fn() }));
 
-import { signIn } from "next-auth/react";
+import { signInCredentials } from "../../lib/sign-in";
 import { submitRegistration } from "./submit";
 
-const signInMock = signIn as unknown as Mock;
+const signInMock = signInCredentials as unknown as Mock;
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
@@ -69,9 +69,7 @@ describe("submitRegistration: the network failed", () => {
     signInMock.mockResolvedValueOnce({ ok: false, error: "CredentialsSignin" });
 
     await expect(submitRegistration(FIELDS)).resolves.toBe("network error, try again");
-    expect(signInMock).toHaveBeenCalledWith("credentials", {
-      email: FIELDS.email, password: FIELDS.password, redirect: false,
-    });
+    expect(signInMock).toHaveBeenCalledWith(FIELDS.email, FIELDS.password);
   });
 
   it("signs the user in anyway when the row WAS committed before the socket died", async () => {
@@ -83,9 +81,9 @@ describe("submitRegistration: the network failed", () => {
     await expect(submitRegistration(FIELDS)).resolves.toBeNull();
   });
 
-  it("still reports a network error when the probe itself rejects", async () => {
+  it("still reports a network error when the probe cannot reach the server either", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    signInMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    signInMock.mockResolvedValueOnce(null);
 
     await expect(submitRegistration(FIELDS)).resolves.toBe("network error, try again");
   });
@@ -93,9 +91,12 @@ describe("submitRegistration: the network failed", () => {
   // The account exists by now, so "try again" would walk the user into a
   // permanent 409. Same message as a refused sign-in, because the advice is
   // the same: log in.
-  it("tells a user whose account WAS created to log in when signIn rejects", async () => {
+  // signInCredentials never rejects -- it returns null for every failure,
+  // network included (asserted in lib/sign-in.test.ts). Mocking a rejection
+  // here would be testing a contract the helper does not have.
+  it("tells a user whose account WAS created to log in when the sign-in fails outright", async () => {
     fetchMock.mockResolvedValueOnce(reply(201, { ok: true }));
-    signInMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    signInMock.mockResolvedValueOnce(null);
 
     await expect(submitRegistration(FIELDS)).resolves.toBe("account created — please log in");
   });
@@ -112,13 +113,9 @@ describe("submitRegistration: the registration succeeded", () => {
     expect(url).toBe("/api/register");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual(FIELDS);
-    // redirect:false or signIn navigates away and the error line below the
-    // form can never be reached.
-    expect(signInMock).toHaveBeenCalledWith("credentials", {
-      email: FIELDS.email,
-      password: FIELDS.password,
-      redirect: false,
-    });
+    // The literal submitted, not live component state: R62's probe must never
+    // be able to sign in as a different account than the one just registered.
+    expect(signInMock).toHaveBeenCalledWith(FIELDS.email, FIELDS.password);
   });
 
   // The account now exists, so "registration failed" would send the user back
