@@ -119,6 +119,40 @@ def test_collect_outputs_excludes_input_files(tmp_path):
     assert out == {"out.txt": "output, must be kept"}
 
 
+def test_collect_outputs_keep_survives_crowding(tmp_path, monkeypatch):
+    # R33: workdir.iterdir()'s raw order is unspecified/filesystem-dependent
+    # (reviewer measured real ext4 ordering where a file created LAST came
+    # back 2nd of 22). Junk files sorted ahead of a real output can crowd it
+    # out of the combined cap before the collector ever reaches it --
+    # manufacturing "no result produced" (a submission fault) out of
+    # nothing. A declared `keep` name must survive that regardless of
+    # naming/ordering; construct the adversarial ordering the reviewer used
+    # (junk sorts before the real output) to prove it.
+    monkeypatch.setattr(runner, "MAX_TOTAL_OUTPUT_BYTES", 1000)
+    for i in range(5):
+        (tmp_path / f"a-junk{i}.txt").write_text("x" * 300)  # 5 x 300B = 1500B > budget, sorts first
+    (tmp_path / "z-result.xml").write_text("the real output")  # sorts last
+
+    without_keep = runner._collect_outputs(tmp_path, {})
+    assert "z-result.xml" not in without_keep  # proves the crowding-out bug is real
+
+    with_keep = runner._collect_outputs(tmp_path, {}, keep=("z-result.xml",))
+    assert with_keep["z-result.xml"] == "the real output"  # keep survives regardless of ordering
+
+
+def test_collect_outputs_counts_bytes_not_characters(tmp_path, monkeypatch):
+    # R33 minor: the running total was len(content) -- CHARACTERS -- while
+    # MAX_TOTAL_OUTPUT_BYTES is named/dimensioned in BYTES. '€' is 1 char but
+    # 3 UTF-8 bytes: 4 of them is 4 chars (comfortably under a 10-byte budget
+    # by the old, wrong accounting) but 12 real bytes (over it).
+    monkeypatch.setattr(runner, "MAX_TOTAL_OUTPUT_BYTES", 10)
+    multibyte = "€" * 4
+    assert len(multibyte) == 4  # sanity: character count alone would wrongly fit
+    (tmp_path / "multibyte.txt").write_bytes(multibyte.encode("utf-8"))
+    out = runner._collect_outputs(tmp_path, {})
+    assert out == {}  # excluded: 12 real bytes > 10-byte budget
+
+
 # R31: _verify_mount's locking is likewise pure -- no daemon needed, only a
 # canary stub.
 

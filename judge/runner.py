@@ -185,29 +185,52 @@ def _safe_read(p: pathlib.Path) -> str | None:
         return None
 
 
-def _collect_outputs(workdir: pathlib.Path, input_files: dict[str, str]) -> dict[str, str]:
+def _collect_outputs(workdir: pathlib.Path, input_files: dict[str, str],
+                      keep: tuple[str, ...] = ()) -> dict[str, str]:
     """Everything under workdir except the caller's own inputs, subject to
-    _safe_read's per-file rules (R25/R29) AND a combined per-run cap (R32) --
-    stops accepting further files once the running total would exceed
-    MAX_TOTAL_OUTPUT_BYTES, so many-small-files can't add up to an unbounded
-    read the way a single oversized file already can't.
+    _safe_read's per-file rules (R25/R29) AND a combined per-run cap (R32).
+
+    R33: workdir.iterdir()'s order is unspecified -- measured live on this
+    host's real ext4 to be neither alphabetical nor creation-order (a file
+    created LAST came back 2nd of 22). Stopping the combined cap at raw
+    iterdir() order let a handful of incidental junk files crowd out
+    result.xml/bench.json before the cap ever reached them, turning "the
+    judge exhausted its own budget" into "the judge manufactured a
+    submission fault out of nothing" -- exactly the player penalty the
+    platform/submission split forbids, and only because round 2 added the
+    cap. Fixed two ways: `keep` names the files the caller actually needs
+    (Task 8/9/11 declare result.xml/bench.json) -- those are read first and
+    are exempt from the combined cap (still bounded by _safe_read's
+    per-file cap, which is what actually bounds them); everything else
+    fills the remaining combined budget afterwards in deterministic SORTED
+    order, so a truncation is at least reproducible instead of
+    filesystem-dependent. Also: the running total is now p.stat().st_size
+    (real bytes) rather than len(content) (characters) -- multi-byte UTF-8
+    let up to ~4x the advertised MAX_TOTAL_OUTPUT_BYTES through.
     """
+    names = sorted(p.name for p in workdir.iterdir() if p.name not in input_files)
+    ordered = [n for n in keep if n in names] + [n for n in names if n not in keep]
+
     out = {}
     total = 0
-    for p in workdir.iterdir():
-        if p.name in input_files:
-            continue
+    for name in ordered:
+        p = workdir / name
         content = _safe_read(p)
         if content is None:
             continue
-        if total + len(content) > MAX_TOTAL_OUTPUT_BYTES:
+        if name in keep:
+            out[name] = content
+            continue
+        size = p.stat().st_size
+        if total + size > MAX_TOTAL_OUTPUT_BYTES:
             break
-        out[p.name] = content
-        total += len(content)
+        out[name] = content
+        total += size
     return out
 
 
-def run_sandbox(files: dict[str, str], cmd: list[str], timeout_s: int = 30) -> SandboxResult:
+def run_sandbox(files: dict[str, str], cmd: list[str], timeout_s: int = 30,
+                 keep: tuple[str, ...] = ()) -> SandboxResult:
     workdir = None
     container = None
     try:
@@ -248,7 +271,7 @@ def run_sandbox(files: dict[str, str], cmd: list[str], timeout_s: int = 30) -> S
             except Exception:
                 pass  # already exited on its own between the timeout firing and this call
             exit_code, timed_out = -1, True
-        out = _collect_outputs(workdir, files)
+        out = _collect_outputs(workdir, files, keep)
         return SandboxResult(exit_code, timed_out, out, None)
     except Exception as e:
         # R6: anything landing here -- the mount canary, containers.create()
