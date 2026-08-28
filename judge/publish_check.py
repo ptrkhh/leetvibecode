@@ -40,11 +40,21 @@ def _need(path: pathlib.Path) -> str | None:
 
 
 def check(challenge_dir: pathlib.Path) -> int:
+    # R44: invalidate any prior lock FIRST, unconditionally, before any check
+    # below can fail -- every failure path returns without otherwise touching
+    # this file, so without this a lock from an earlier PASSING run would
+    # silently survive a later FAILING run. Its mere presence must always
+    # reflect the immediately preceding run's own verdict, or an ordinary
+    # authoring loop (OK, edit further, REFUSED, commit without noticing)
+    # ships a referenceMs that no longer matches the repo's reference
+    # solution -- exactly the silent mis-scoring this tool exists to prevent.
+    (challenge_dir / "challenge.lock.json").unlink(missing_ok=True)
+
     # Every missing/unreadable piece is checked (not short-circuited) so a
     # malformed directory gets ALL its problems reported in one run, same
     # reasoning as running both hidden suites together below.
     yaml_path = challenge_dir / "challenge.yaml"
-    yaml_ok = yaml_path.exists()
+    yaml_ok = yaml_path.is_file()
     if not yaml_ok:
         print(f"REFUSED: missing {yaml_path}")
 
@@ -97,4 +107,7 @@ def check(challenge_dir: pathlib.Path) -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("usage: python publish_check.py <challenge-dir>")
+        sys.exit(1)
     sys.exit(check(pathlib.Path(sys.argv[1])))

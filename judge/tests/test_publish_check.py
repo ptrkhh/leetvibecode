@@ -51,6 +51,21 @@ def test_failing_reference_refused(tmp_path):
 
 
 @pytest.mark.docker
+def test_stale_lock_invalidated_by_later_failing_run(tmp_path):
+    # R44: a lock from a prior PASSING run must never survive a later
+    # FAILING run in the same directory. This exact two-run shape is what
+    # caught the bug: get OK, break the reference, rerun in place, get
+    # REFUSED -- the old (now-wrong) lock must be gone, not left behind.
+    ch = write_challenge(tmp_path, GOOD_ADD)
+    assert check(ch) == 0
+    assert (ch / "challenge.lock.json").exists()
+
+    (ch / "reference" / "solution.py").write_text("def add(a, b):\n    return 0\n")
+    assert check(ch) == 1
+    assert not (ch / "challenge.lock.json").exists()
+
+
+@pytest.mark.docker
 def test_failures_from_both_suites_reported(tmp_path, capsys):
     # a reference wrong enough to fail BOTH suites' tests at once must
     # report both in the one run, not just whichever pytest lists first.
