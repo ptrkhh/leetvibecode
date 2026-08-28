@@ -1,5 +1,7 @@
 import os
 import pathlib
+import threading
+import time
 
 import docker
 import pytest
@@ -92,6 +94,71 @@ def test_safe_read_tolerates_read_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pathlib.Path, "read_text", boom)
     assert runner._safe_read(p) is None
+
+
+# R32: _collect_outputs is likewise pure -- no daemon needed.
+
+def test_collect_outputs_caps_combined_total(tmp_path, monkeypatch):
+    # R32: the per-file cap alone doesn't bound the FILE COUNT (reviewer
+    # measured 200 files just under it -> 200 MB into judge memory in 1.4s).
+    # Monkeypatch a small total budget so the same code path is provable
+    # without writing real megabytes: 10 files x 100B = 1000B against a 250B
+    # budget must NOT all come through.
+    monkeypatch.setattr(runner, "MAX_TOTAL_OUTPUT_BYTES", 250)
+    for i in range(10):
+        (tmp_path / f"f{i}.txt").write_text("x" * 100)
+    out = runner._collect_outputs(tmp_path, {})
+    assert sum(len(v) for v in out.values()) <= 250
+    assert len(out) < 10  # not every file got through
+
+
+def test_collect_outputs_excludes_input_files(tmp_path):
+    (tmp_path / "main.py").write_text("input, must be excluded")
+    (tmp_path / "out.txt").write_text("output, must be kept")
+    out = runner._collect_outputs(tmp_path, {"main.py": "..."})
+    assert out == {"out.txt": "output, must be kept"}
+
+
+# R31: _verify_mount's locking is likewise pure -- no daemon needed, only a
+# canary stub.
+
+def test_verify_mount_concurrent_callers_all_see_failure(monkeypatch):
+    # R31: check-then-act on _mount_checked/_mount_error without a lock let
+    # a "winning" thread flip _mount_checked=True BEFORE its slow canary
+    # finished, so 7 of 8 concurrent callers sailed through an UNVERIFIED
+    # mount (checked=True, error=None) -- reintroducing R28's exact defect
+    # in a timing-dependent form. Reproduce that shape with a canary rigged
+    # to sleep then fail, and require EVERY caller to get platform_error via
+    # the real run_sandbox() entrypoint (not just the winner) -- this never
+    # reaches a real container, since _verify_mount() is the first thing
+    # run_sandbox() does and it short-circuits the whole call on failure.
+    monkeypatch.setattr(runner, "_mount_checked", False)
+    monkeypatch.setattr(runner, "_mount_error", None)
+
+    def slow_failing_canary():
+        time.sleep(0.2)
+        raise RuntimeError("simulated broken mount")
+
+    monkeypatch.setattr(runner, "_run_mount_canary", slow_failing_canary)
+
+    results = []
+    results_lock = threading.Lock()
+
+    def call():
+        r = runner.run_sandbox({"main.py": "pass"}, ["python", "main.py"])
+        with results_lock:
+            results.append(r.platform_error)
+
+    threads = [threading.Thread(target=call) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert len(results) == 8
+    # every caller, not just the winner, gets platform_error -- and it names
+    # the real failure, not a generic/blank message:
+    assert all(r and "simulated broken mount" in r for r in results)
 
 
 # --- integration tests against the real daemon + lvc-sandbox image ---

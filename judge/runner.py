@@ -2,6 +2,7 @@ import logging
 import os
 import pathlib
 import shutil
+import threading
 import uuid
 from collections import namedtuple
 
@@ -16,6 +17,12 @@ IMAGE = "lvc-sandbox"
 # result.xml nor bench.json needs more than a few hundred KB; 1 MiB/file is a
 # generous cap that still hard-stops an unbounded write from reaching judge memory.
 MAX_OUTPUT_BYTES = 1_048_576
+# R32: the per-file cap alone doesn't bound the FILE COUNT -- 200 files just
+# under MAX_OUTPUT_BYTES measured 200 MB into judge memory in 1.4s. result.xml
+# and bench.json are the only outputs that matter and neither is large; 4 MiB
+# (4x the per-file cap) comfortably covers a few real files plus incidental
+# stray writes while making a many-small-files run impossible.
+MAX_TOTAL_OUTPUT_BYTES = 4_194_304
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +32,7 @@ logger = logging.getLogger(__name__)
 _docker_client = None
 _mount_checked = False
 _mount_error = None
+_mount_lock = threading.Lock()
 
 
 def _client():
@@ -90,16 +98,28 @@ def _verify_mount():
     what's actually misconfigured. The real check runs at most once per
     process; a cached failure is re-raised on every later call without
     spawning another container.
+
+    R31: check-then-act on the two globals above, unguarded, let a "winning"
+    thread flip _mount_checked to True BEFORE its (slow) canary finished --
+    every other concurrent caller then saw "checked=True, error=None" and
+    sailed through an unverified mount, reintroducing R28's exact defect in
+    a timing-dependent form. Not reachable while nothing calls run_sandbox
+    concurrently, but Task 10 adds worker threads that do. The lock below
+    holds for the ENTIRE check-run-raise sequence, so every thread either
+    does the one real canary run, or blocks until it's fully finished (pass
+    or fail) before it can even read the result -- there is no window where
+    a thread observes "checked" without also seeing the matching error.
     """
     global _mount_checked, _mount_error
-    if not _mount_checked:
-        _mount_checked = True
-        try:
-            _run_mount_canary()
-        except Exception as e:
-            _mount_error = e
-    if _mount_error is not None:
-        raise _mount_error
+    with _mount_lock:
+        if not _mount_checked:
+            try:
+                _run_mount_canary()
+            except Exception as e:
+                _mount_error = e
+            _mount_checked = True
+        if _mount_error is not None:
+            raise _mount_error
 
 
 def _is_wait_timeout(exc: BaseException) -> bool:
@@ -165,6 +185,28 @@ def _safe_read(p: pathlib.Path) -> str | None:
         return None
 
 
+def _collect_outputs(workdir: pathlib.Path, input_files: dict[str, str]) -> dict[str, str]:
+    """Everything under workdir except the caller's own inputs, subject to
+    _safe_read's per-file rules (R25/R29) AND a combined per-run cap (R32) --
+    stops accepting further files once the running total would exceed
+    MAX_TOTAL_OUTPUT_BYTES, so many-small-files can't add up to an unbounded
+    read the way a single oversized file already can't.
+    """
+    out = {}
+    total = 0
+    for p in workdir.iterdir():
+        if p.name in input_files:
+            continue
+        content = _safe_read(p)
+        if content is None:
+            continue
+        if total + len(content) > MAX_TOTAL_OUTPUT_BYTES:
+            break
+        out[p.name] = content
+        total += len(content)
+    return out
+
+
 def run_sandbox(files: dict[str, str], cmd: list[str], timeout_s: int = 30) -> SandboxResult:
     workdir = None
     container = None
@@ -185,6 +227,12 @@ def run_sandbox(files: dict[str, str], cmd: list[str], timeout_s: int = 30) -> S
             IMAGE, cmd, detach=True, network_disabled=True,
             mem_limit="512m", pids_limit=128, nano_cpus=1_000_000_000,
             read_only=True, tmpfs={"/tmp": "size=16m"},
+            # ponytail: R32's write side -- a bind mount takes no size option,
+            # so mem_limit does not stop a payload filling host disk (measured:
+            # 100 MiB in 1.27s). Workdirs are rmtree'd after every run, so this
+            # is a transient DoS window, not permanent damage; real fix is
+            # operational -- a dedicated filesystem or a quota on
+            # SANDBOX_HOST_DIR -- add one if a deploy needs it.
             volumes={str(hostdir): {"bind": "/work", "mode": "rw"}},
             working_dir="/work", user="runner",
         )
@@ -200,8 +248,7 @@ def run_sandbox(files: dict[str, str], cmd: list[str], timeout_s: int = 30) -> S
             except Exception:
                 pass  # already exited on its own between the timeout firing and this call
             exit_code, timed_out = -1, True
-        out = {p.name: content for p in workdir.iterdir()
-               if p.name not in files and (content := _safe_read(p)) is not None}
+        out = _collect_outputs(workdir, files)
         return SandboxResult(exit_code, timed_out, out, None)
     except Exception as e:
         # R6: anything landing here -- the mount canary, containers.create()
