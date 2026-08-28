@@ -10,13 +10,19 @@ export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   return (
     <form
       className="mx-auto flex max-w-sm flex-col gap-3"
       onSubmit={async (e) => {
         e.preventDefault();
         setError("");
+        // A second click while the first request is in flight registers the
+        // same email twice: R46 makes the DB safe, but the loser's 409 would
+        // tell a user whose account was just created that the email is taken.
+        setBusy(true);
         const message = await submitRegistration({ name, email, password });
+        setBusy(false);
         if (message) setError(message);
         else {
           router.push("/");
@@ -31,6 +37,7 @@ export default function Register() {
         aria-label="Name"
         autoComplete="name"
         required
+        aria-describedby="register-error"
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
@@ -41,6 +48,7 @@ export default function Register() {
         aria-label="Email"
         autoComplete="email"
         required
+        aria-describedby="register-error"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
       />
@@ -51,11 +59,16 @@ export default function Register() {
         aria-label="Password"
         autoComplete="new-password"
         required
+        aria-describedby="register-error"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <button className="rounded bg-black p-2 text-white">Register</button>
+      <p id="register-error" role="alert" className="text-sm text-red-600">
+        {error}
+      </p>
+      <button disabled={busy} className="rounded bg-black p-2 text-white disabled:opacity-50">
+        Register
+      </button>
       <Link href="/login" className="text-sm underline">
         Have an account? Log in
       </Link>

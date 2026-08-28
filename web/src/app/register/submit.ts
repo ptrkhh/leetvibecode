@@ -23,21 +23,34 @@ export async function submitRegistration(body: {
   email: string;
   password: string;
 }): Promise<string | null> {
-  const res = await fetch("/api/register", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch("/api/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // A dropped connection or a backend restart mid-request rejects the fetch
+    // itself. Unwrapped it escapes as an unhandled rejection: no message, an
+    // enabled button, and a user with no way to tell whether anything
+    // happened. Nothing was created, so "try again" is honest advice.
+    return "network error, try again";
+  }
   if (!res.ok) {
     // A 500 or a proxy error page has no JSON body; .catch keeps that from
     // throwing out of the submit handler and leaving the form silently dead.
     const data = await res.json().catch(() => null);
     return typeof data?.error === "string" ? data.error : "registration failed";
   }
+  // Past this point the account EXISTS, so a network failure here must not
+  // produce "try again" -- that walks the user into a permanent 409. A
+  // rejection collapses into the same branch as a refused sign-in, whose
+  // message ("log in") is the correct advice either way.
   const signedIn = await signIn("credentials", {
     email: body.email,
     password: body.password,
     redirect: false,
-  });
+  }).catch(() => null);
   return signedIn?.ok ? null : "account created — please log in";
 }

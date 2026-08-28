@@ -41,7 +41,7 @@ export default function RootLayout({
             <span className="grow" />
             <AuthStatus />
           </nav>
-          {children}
+          <main>{children}</main>
         </Providers>
       </body>
     </html>

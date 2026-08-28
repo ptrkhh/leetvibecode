@@ -55,6 +55,29 @@ describe("submitRegistration: the registration failed", () => {
   });
 });
 
+// The gap the 9-mutation table left: every mutation there was logical or
+// response-shaped, and none of them made a request REJECT. An unwrapped fetch
+// escapes the submit handler as an unhandled rejection -- no message, button
+// still enabled, nothing for the user to act on.
+describe("submitRegistration: the network failed", () => {
+  it("reports a rejected fetch instead of throwing, and never signs in", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    await expect(submitRegistration(FIELDS)).resolves.toBe("network error, try again");
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
+  // The account exists by now, so "try again" would walk the user into a
+  // permanent 409. Same message as a refused sign-in, because the advice is
+  // the same: log in.
+  it("tells a user whose account WAS created to log in when signIn rejects", async () => {
+    fetchMock.mockResolvedValueOnce(reply(201, { ok: true }));
+    signInMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    await expect(submitRegistration(FIELDS)).resolves.toBe("account created — please log in");
+  });
+});
+
 describe("submitRegistration: the registration succeeded", () => {
   it("posts the typed fields verbatim, then signs in with the same credentials", async () => {
     fetchMock.mockResolvedValueOnce(reply(201, { ok: true }));
