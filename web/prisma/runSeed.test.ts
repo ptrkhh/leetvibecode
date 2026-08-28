@@ -46,6 +46,7 @@ function writeUnlockedChallenge(name: string) {
 function mockPrisma(opts: {
   upsertRejectsFor?: Set<string>;
   existingChallenge?: (slug: string) => { status: string } | null;
+  findUniqueThrowsFor?: Set<string>;
 } = {}) {
   return {
     model: { upsert: vi.fn().mockResolvedValue({}) },
@@ -56,8 +57,12 @@ function mockPrisma(opts: {
         }
         return {};
       }),
-      findUnique: vi.fn(async ({ where }: { where: { slug: string } }) =>
-        opts.existingChallenge ? opts.existingChallenge(where.slug) : null),
+      findUnique: vi.fn(async ({ where }: { where: { slug: string } }) => {
+        if (opts.findUniqueThrowsFor?.has(where.slug)) {
+          throw new Error("Connection terminated unexpectedly");
+        }
+        return opts.existingChallenge ? opts.existingChallenge(where.slug) : null;
+      }),
     },
   } as unknown as PrismaClient;
 }
@@ -140,6 +145,35 @@ describe("runSeed", () => {
       expect(warnings.some((w) => w.includes("gone-stale") && w === "SKIP gone-stale: no challenge.lock.json -- run publish_check first")).toBe(false);
       expect(prisma.challenge.upsert).not.toHaveBeenCalled();
       warnSpy.mockRestore();
+    });
+  });
+
+  // R50: the R48 lookup itself is a DB call with no try/catch -- unlike an
+  // ordinary "no row" result (findUnique resolves null, doesn't throw), a
+  // throw here is infra-shaped (dropped connection, exhausted pool). Left
+  // unguarded it reintroduces exactly the failure class R49 fixed, on the
+  // *unlocked* branch -- the state hit on every run with any in-progress
+  // challenge, not just a specific bad `models` shape.
+  describe("R50 -- the R48 lookup itself must not take down the run either", () => {
+    it("reports a throwing findUnique as an ERROR line and still publishes a later valid challenge", async () => {
+      writeUnlockedChallenge("aaa-lookup-fails");
+      writeChallenge("zzz-valid");
+      const prisma = mockPrisma({ findUniqueThrowsFor: new Set(["aaa-lookup-fails"]) });
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await expect(runSeed(prisma, dir)).rejects.toThrow(/1 challenge director/);
+
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining("ERROR aaa-lookup-fails: Connection terminated unexpectedly"));
+      // the later, valid challenge was still attempted and published -- not
+      // silently dropped as collateral damage
+      expect(prisma.challenge.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { slug: "zzz-valid" } }));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("published zzz-valid"));
+
+      errSpy.mockRestore();
+      logSpy.mockRestore();
     });
   });
 });

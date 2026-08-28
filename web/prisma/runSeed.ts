@@ -42,16 +42,27 @@ export async function runSeed(prisma: PrismaClient, challengesDir: string) {
         // possibility that live content has since diverged from source, so
         // an operator can tell "never published" from "published, maybe
         // stale" at a glance instead of both reading as the same routine skip.
-        const existing = await prisma.challenge.findUnique({
-          where: { slug: dir.name }, select: { status: true },
-        });
-        if (existing?.status === "published") {
-          console.warn(
-            `SKIP ${dir.name}: no challenge.lock.json, but a PUBLISHED row for this slug already exists -- ` +
-            "live content may no longer match source; run publish_check and re-seed to refresh it",
-          );
-        } else {
-          console.warn(`SKIP ${dir.name}: no challenge.lock.json -- run publish_check first`);
+        try {
+          const existing = await prisma.challenge.findUnique({
+            where: { slug: dir.name }, select: { status: true },
+          });
+          if (existing?.status === "published") {
+            console.warn(
+              `SKIP ${dir.name}: no challenge.lock.json, but a PUBLISHED row for this slug already exists -- ` +
+              "live content may no longer match source; run publish_check and re-seed to refresh it",
+            );
+          } else {
+            console.warn(`SKIP ${dir.name}: no challenge.lock.json -- run publish_check first`);
+          }
+        } catch (e) {
+          // R50: this lookup is itself a DB call. findUnique resolves null
+          // for "no row" -- it does not throw on the ordinary path -- so a
+          // throw here is infra-shaped (dropped connection, exhausted pool),
+          // not a content problem. Unguarded, it would reintroduce exactly
+          // R49's failure class, on the branch every in-progress challenge
+          // hits on every run.
+          errors++;
+          console.error(`ERROR ${dir.name}: ${e instanceof Error ? e.message : String(e)}`);
         }
       } else {
         errors++;
