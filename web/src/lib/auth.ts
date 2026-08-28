@@ -19,7 +19,11 @@ export const authOptions: NextAuthOptions = {
       credentials: { email: {}, password: {} },
       async authorize(creds) {
         if (!creds?.email || !creds.password) return null;
-        const user = await prisma.user.findUnique({ where: { email: creds.email } });
+        // R47: normalize the lookup the same way register/route.ts normalizes
+        // storage, so a user who registered as Foo@Bar.com can log in typing
+        // any case of the same address.
+        const email = creds.email.trim().toLowerCase();
+        const user = await prisma.user.findUnique({ where: { email } });
         const passwordOk = await compare(creds.password, user?.passwordHash ?? DUMMY_HASH);
         if (!user || !passwordOk) return null;
         return { id: user.id, email: user.email, name: user.name };

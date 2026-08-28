@@ -76,6 +76,18 @@ describe("authorize", () => {
     expect(result).toEqual({ id: "u1", email: "a@b.io", name: "A" });
     expect(result).not.toHaveProperty("passwordHash");
   });
+
+  // R47: a user who registered as Foo@Bar.com (stored lowercase by route.ts)
+  // must still be able to log in typing a different case.
+  it("normalizes the email (trim + lowercase) before the lookup, so login works regardless of case", async () => {
+    const passwordHash = hashSync("correct-password", 10);
+    findUnique.mockResolvedValueOnce({ id: "u1", email: "foo@bar.com", name: "Foo", passwordHash });
+
+    const result = await authorize({ email: "  Foo@Bar.com  ", password: "correct-password" });
+
+    expect(findUnique).toHaveBeenCalledWith({ where: { email: "foo@bar.com" } });
+    expect(result).toEqual({ id: "u1", email: "foo@bar.com", name: "Foo" });
+  });
 });
 
 // The jwt/session callbacks are typed by next-auth against a much larger params

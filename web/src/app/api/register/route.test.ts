@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { compare } from "bcryptjs";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -65,6 +66,54 @@ describe("POST /api/register", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "email already registered" });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  // R46: findUnique-then-create is not atomic. Two concurrent registrations for
+  // the same email can both pass the pre-check and both reach create(); the
+  // @unique constraint stops the duplicate row but raises P2002 on the loser.
+  it("returns 409 (not a 500) when create() loses a registration race", async () => {
+    findUnique.mockResolvedValueOnce(null); // pre-check saw no existing row
+    create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the fields: (`email`)", {
+        code: "P2002",
+        clientVersion: "6.19.3",
+      }),
+    );
+
+    const res = await POST(req({ email: "a@b.io", name: "A", password: "password1" }));
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "email already registered" });
+  });
+
+  it("does not mask a non-unique-constraint create() failure as 409", async () => {
+    findUnique.mockResolvedValueOnce(null);
+    create.mockRejectedValueOnce(new Error("connection reset"));
+
+    await expect(POST(req({ email: "a@b.io", name: "A", password: "password1" }))).rejects.toThrow(
+      "connection reset",
+    );
+  });
+
+  // R47: case is normalized so Foo@Bar.com and foo@bar.com are one account.
+  it("normalizes the email (trim + lowercase) before storing it", async () => {
+    findUnique.mockResolvedValueOnce(null);
+    create.mockResolvedValueOnce({});
+
+    await POST(req({ email: "  Foo@Bar.com  ", name: "A", password: "password1" }));
+
+    const data = create.mock.calls[0][0].data;
+    expect(data.email).toBe("foo@bar.com");
+    expect(data.name).toBe("A"); // name is left untouched, only email is normalized
+  });
+
+  it("checks for an existing account using the normalized email too", async () => {
+    findUnique.mockResolvedValueOnce({ id: "u1", email: "foo@bar.com" });
+
+    const res = await POST(req({ email: "FOO@Bar.com", name: "A", password: "password1" }));
+
+    expect(res.status).toBe(409);
+    expect(findUnique).toHaveBeenCalledWith({ where: { email: "foo@bar.com" } });
   });
 
   const invalidCases: [string, Record<string, unknown>][] = [
