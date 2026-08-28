@@ -3,9 +3,10 @@ import xml.etree.ElementTree as ET
 
 from runner import run_sandbox
 
-# R34: mirrors pytest's own default collection rule (test_*.py / def test_*)
-# so the expected-name set below reflects what an honest run would produce.
-_TEST_DEF_RE = re.compile(r"^\s*def (test_\w+)", re.MULTILINE)
+# R34: mirrors pytest's own default collection rule (test_*.py / def test_*,
+# including `async def`) so the expected-name set below reflects what an
+# honest run would produce.
+_TEST_DEF_RE = re.compile(r"^\s*(?:async\s+)?def (test_\w+)", re.MULTILINE)
 
 
 def _sanitize(msg: str | None) -> str | None:
@@ -77,13 +78,36 @@ def run_tests(code: str, test_files: dict[str, str]):
     # result from OUTSIDE the container (observed behaviour, not a trusted
     # artifact) or run harness/payload under different uids -- an
     # architectural change, not a fix here.
+    #
+    # R36: exit-code check was bidirectional (`all_passed != (exit_code==0)`)
+    # and a genuinely SKIPPED test broke the reverse direction -- pytest's
+    # own exit code stays 0 for a skip (only real failures/errors make it
+    # non-zero), but this module's `passed` conservatively folds skip into
+    # False (skip must count as failed, or a player dodges a hidden test by
+    # skipping it), so a single honest skip made `all_passed=False` while
+    # `exit_code==0` and the whole run was wrongly thrown away. A genuinely
+    # 100%-passing run always exits 0, so the forward direction never
+    # false-positives on honest code; only that direction is kept.
     all_passed = all(row["passed"] for row in results)
-    if all_passed != (r.exit_code == 0):
+    if all_passed and r.exit_code != 0:
         return [], "tests produced inconsistent results", None
+    # R36: pytest suffixes each parametrized case onto the function name
+    # (`test_foo[1-2-3]`), so N cases from one `def` are N different
+    # reported names -- comparing those raw against the bare `def test_foo`
+    # scraped from source can never be equal, rejecting every parametrized
+    # suite (the idiomatic way to write this product's many-cases-per-
+    # function tests) including 100%-correct code. Stripping the `[...]`
+    # suffix before building the set collapses all of one function's cases
+    # back to its bare name, so this is still SET EQUALITY, not a subset
+    # check: a subset check would only catch foreign/forged names and
+    # silently accept a result missing an entire expected function (e.g. its
+    # collection suppressed some other way) -- equality also catches that,
+    # and stripping+deduplication loses no information for it, since any one
+    # reported case for a function is enough to put its bare name in the set.
     expected = set()
     for content in test_files.values():
         expected.update(_TEST_DEF_RE.findall(content))
-    got = {row["name"].rsplit("::", 1)[-1] for row in results}
+    got = {row["name"].rsplit("::", 1)[-1].split("[", 1)[0] for row in results}
     if got != expected:
         return [], "tests produced unexpected results", None
     return results, None, None

@@ -160,6 +160,70 @@ def test_run_tests_end_to_end():
 
 
 @pytest.mark.docker
+def test_run_tests_parametrized_correct_solution_scores_normally():
+    # R36 (CRITICAL regression from the R34 fix): pytest suffixes each
+    # parametrized case onto the function name (test_add_cases[1-2-3]).
+    # The name cross-check compared that raw against the bare `def
+    # test_add_cases` scraped from source, so the two sets could NEVER be
+    # equal -- every parametrized suite was rejected as "tests produced
+    # unexpected results", including this exact 100%-correct solution
+    # (confirmed live before this fix: sub_err == "tests produced unexpected
+    # results", results == []). Parametrize is the idiomatic way to write
+    # this product's many-cases-per-function hidden suites, so this is not
+    # exotic -- run it end-to-end through the real sandbox, not mocked.
+    results, sub_err, plat_err = run_tests(
+        "def add(a, b):\n    return a + b\n",
+        {"test_build.py": "import pytest\nfrom solution import add\n\n"
+                          "@pytest.mark.parametrize('a,b,expected', [(1, 2, 3), (2, 3, 5), (10, -1, 9)])\n"
+                          "def test_add_cases(a, b, expected):\n"
+                          "    assert add(a, b) == expected\n"})
+    assert plat_err is None and sub_err is None
+    assert len(results) == 3
+    assert all(r["passed"] for r in results)
+
+
+@pytest.mark.docker
+def test_run_tests_class_based_test_scores_normally():
+    # Regression guard: class-based tests already worked before the R36 fix
+    # (an indented `def test_y` already matched the old `^\s*def` regex, and
+    # a class method's name carries no `[...]` suffix to strip) -- confirm
+    # the R36 regex/comparison changes don't disturb this shape.
+    results, sub_err, plat_err = run_tests(
+        "def add(a, b):\n    return a + b\n",
+        {"test_build.py": "from solution import add\n\n"
+                          "class TestOps:\n"
+                          "    def test_add_class(self):\n"
+                          "        assert add(1, 2) == 3\n"})
+    assert plat_err is None and sub_err is None
+    assert len(results) == 1 and results[0]["passed"] is True
+
+
+@pytest.mark.docker
+def test_run_tests_async_def_test_is_skipped_not_rejected():
+    # R36: `^\s*def` never matched `async def`, a latent gap alongside the
+    # parametrize one -- now fixed by `^\s*(?:async\s+)?def`. Empirically
+    # (this image: plain pytest 8.3.4, no asyncio plugin), pytest COLLECTS
+    # an async def test but can't await it, so it reports a <skipped> with
+    # exit_code 0, not a failure -- confirmed live via a direct run_sandbox
+    # call. "skipped counts as failed" (this module's own conservative rule)
+    # is the honest scoring outcome here: one failed result, not a rejected
+    # run. Also pins a second bug this uncovered: the exit-code check was
+    # bidirectional and rejected ANY honestly-skipped test, because pytest's
+    # exit code stays 0 for a skip while `passed` conservatively counts it
+    # as False -- confirmed live (this exact scenario returned sub_err=
+    # "tests produced inconsistent results" before that was narrowed to one
+    # direction).
+    results, sub_err, plat_err = run_tests(
+        "def add(a, b):\n    return a + b\n",
+        {"test_build.py": "from solution import add\n\n"
+                          "async def test_async_add():\n"
+                          "    assert add(1, 2) == 3\n"})
+    assert plat_err is None and sub_err is None
+    assert len(results) == 1
+    assert results[0]["passed"] is False  # skipped -> failed, conservative
+
+
+@pytest.mark.docker
 def test_run_tests_stdout_never_reaches_results():
     # The product invariant this whole task exists to enforce: raw stdout is
     # NEVER returned to the player. A test that prints (a player trying to
