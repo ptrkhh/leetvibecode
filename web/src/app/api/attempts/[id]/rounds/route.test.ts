@@ -18,6 +18,7 @@ vi.mock("../../../../../lib/db", () => {
   return { prisma };
 });
 
+import { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { prisma } from "../../../../../lib/db";
 import { POST } from "./route";
@@ -343,5 +344,36 @@ describe("POST /api/attempts/[id]/rounds: fan-out atomicity", () => {
     expect(transact).toHaveBeenCalledTimes(1);
     expect(createRound.mock.invocationCallOrder[0]).toBeLessThan(createRun.mock.invocationCallOrder[0]);
     expect(createRun.mock.invocationCallOrder[0]).toBeLessThan(createJob.mock.invocationCallOrder[0]);
+  });
+});
+
+describe("POST /api/attempts/[id]/rounds: duplicate-round race (R51)", () => {
+  // attempt.findUnique (read above) and this route's round.create are not
+  // atomic, so two requests that both pass the in-JS "does this round
+  // already exist" checks before either commits can both reach the create --
+  // a double-click on submit, or a client retrying after a flaky connection,
+  // is ordinary behaviour here, not an edge case. This mocked suite has no
+  // real unique constraint to race against -- only Postgres does -- so the
+  // honest way to model it is two sequential calls fed the identical
+  // pre-race attempt state, with the second call's transaction rejecting
+  // with the P2002 Postgres would actually raise for the loser.
+  it("returns 409 (not 500) when a second call for the same attempt+round loses the unique-constraint race", async () => {
+    findAttempt.mockResolvedValue(freshAttempt());
+    createRound.mockResolvedValueOnce({ id: "round-0-id" });
+    transact.mockImplementationOnce((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+    transact.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError(
+        "Unique constraint failed on the fields: (`attemptId`,`index`)",
+        { code: "P2002", clientVersion: "6.19.3" },
+      ),
+    );
+
+    const first = await req("a1", { promptText: "build it" });
+    const second = await req("a1", { promptText: "build it" });
+
+    expect(first.status).toBe(201);
+    expect(await first.json()).toEqual({ roundId: "round-0-id", index: 0 });
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ error: "round already exists" });
   });
 });

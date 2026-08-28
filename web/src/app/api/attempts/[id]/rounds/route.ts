@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "../../../../../lib/auth";
@@ -55,13 +56,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "no active models for this challenge" }, { status: 503 });
   }
 
-  const round = await prisma.$transaction(async (tx) => {
-    const round = await tx.round.create({ data: { attemptId: id, index, promptText } });
-    for (const modelId of modelIds) {
-      const run = await tx.run.create({ data: { roundId: round.id, modelId } });
-      await tx.job.create({ data: { runId: run.id, type: "generate" } });
+  try {
+    const round = await prisma.$transaction(async (tx) => {
+      const round = await tx.round.create({ data: { attemptId: id, index, promptText } });
+      for (const modelId of modelIds) {
+        const run = await tx.run.create({ data: { roundId: round.id, modelId } });
+        await tx.job.create({ data: { runId: run.id, type: "generate" } });
+      }
+      return round;
+    });
+    return NextResponse.json({ roundId: round.id, index }, { status: 201 });
+  } catch (e) {
+    // R51: attempt.rounds (read above) and this create are not atomic, so two
+    // requests that both pass the checks above -- a double-click on submit,
+    // or a retried request after a flaky connection, ordinary behaviour, not
+    // an edge case -- can both reach here for the same (attemptId, index).
+    // Round's @@unique([attemptId, index]) still stops the duplicate row;
+    // this only turns the loser's P2002 into the same 409 the sequential
+    // check above already returns, instead of letting it escape as an
+    // uncontrolled 500. Same fix as R46 (register/route.ts).
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      const error = index === 1 ? "round 2 already started" : "round already exists";
+      return NextResponse.json({ error }, { status: 409 });
     }
-    return round;
-  });
-  return NextResponse.json({ roundId: round.id, index }, { status: 201 });
+    throw e;
+  }
 }
