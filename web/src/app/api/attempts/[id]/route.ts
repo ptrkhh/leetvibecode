@@ -145,6 +145,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   //
   // Before round 1 exists the second term is vacuous, which is what R10's
   // "once round 1 exists" qualifier means; the platform term still applies.
+  //
+  // On a ROUND-1 run the second term is always true -- ranR1 is built by
+  // mapping over the very array that run is drawn from, so it holds from
+  // Array.map/Set.has semantics alone, not from any DB invariant. That is
+  // why R56 could not have moved a number even in principle, and why the
+  // predicate must not be "simplified" by assuming the same of round 0.
   const ranR1 = r1 && new Set(r1.runs.map((x) => x.model.openrouterId));
   const counted = (x: { errorKind: string | null; model: { openrouterId: string } }) =>
     x.errorKind !== "platform" && (!ranR1 || ranR1.has(x.model.openrouterId));

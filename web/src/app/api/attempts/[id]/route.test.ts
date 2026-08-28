@@ -11,7 +11,17 @@ vi.mock("../../../../lib/db", () => {
   return { prisma };
 });
 
+// R57: a partial mock -- scoreAttempt keeps its real implementation (every
+// number asserted in this file is genuinely computed), it just records the
+// arrays it is HANDED. See the structural assertion in the round-1-platform
+// test for why the output alone is not enough.
+vi.mock("../../../../lib/complete", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../../lib/complete")>();
+  return { ...actual, scoreAttempt: vi.fn(actual.scoreAttempt) };
+});
+
 import { getServerSession } from "next-auth";
+import { scoreAttempt } from "../../../../lib/complete";
 import { prisma } from "../../../../lib/db";
 import { GET } from "./route";
 
@@ -19,6 +29,7 @@ const getSession = getServerSession as unknown as Mock;
 const findAttempt = prisma.attempt.findFirst as unknown as Mock;
 const updateAttempt = prisma.attempt.updateMany as unknown as Mock;
 const updateRun = prisma.run.update as unknown as Mock;
+const scoreSpy = scoreAttempt as unknown as Mock;
 
 const challenge = { slug: "rate-limiter", title: "Rate Limiter", parTokens: 2500, referenceMs: 100 };
 
@@ -59,6 +70,7 @@ beforeEach(() => {
   findAttempt.mockReset();
   updateAttempt.mockReset();
   updateRun.mockReset();
+  scoreSpy.mockClear(); // clear calls only -- the real implementation stays
   getSession.mockResolvedValue({ user: { id: "u1" } });
   updateAttempt.mockResolvedValue({ count: 1 });
   updateRun.mockResolvedValue({});
@@ -496,6 +508,17 @@ describe("GET /api/attempts/[id]: R10 — a model with no round-1 run leaves bot
     // dropped it, which is the lie R56 removes.
     expect(await flags(res)).toEqual([[["a", false], ["b", false]],
                                       [["a", false], ["b", true]]]);
+    // R57: the platform run must be ABSENT from what scoreAttempt RECEIVES,
+    // not merely absent from its output. scoreAttempt drops platform runs
+    // itself, so with only black-box assertions the platform term could be
+    // deleted from this route's filter and every number and every flag would
+    // stay identical -- a latent scoring bug that goes live the moment
+    // complete.ts's survivor filter is ever cleaned up as redundant. The
+    // sibling term needs no such assertion: it has no backstop anywhere, so
+    // dropping it moves finalScore to 73.33 immediately.
+    const [round0Arg, round1Arg] = scoreSpy.mock.calls[0];
+    expect(round0Arg).toHaveLength(2); // both round-0 runs counted
+    expect(round1Arg).toHaveLength(1); // "b" platform-errored -> never handed over
   });
 
   it("keeps an excluded run's real runScore in the payload rather than zeroing it", async () => {

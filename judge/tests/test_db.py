@@ -20,8 +20,14 @@ def make_job(job_type="generate"):
 
 
 def test_claim_returns_pending_job_and_marks_claimed():
-    jobid, runid = make_job()
-    job = db.claim_job("generate", "w1")
+    # R58: unique type string, same isolation the sibling test below already
+    # uses. CLAIM_SQL is pure FIFO over a SHARED queue, so with the literal
+    # "generate" any older pending job left by another task's fixtures wins
+    # the race and the id assertion below fails against a row this test never
+    # created -- a flake with nothing to do with the code under test.
+    job_type = f"claim-{uuid.uuid4().hex[:8]}"
+    jobid, runid = make_job(job_type)
+    job = db.claim_job(job_type, "w1")
     assert job is not None and job["id"] == jobid and job["runId"]
     rows = db.q('SELECT state,"claimedBy" FROM "Job" WHERE id=%s', (job["id"],))
     assert rows[0]["state"] == "claimed" and rows[0]["claimedBy"] == "w1"
