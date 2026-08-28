@@ -424,6 +424,11 @@ describe("GET /api/attempts/[id]: R10 — a model with no round-1 run leaves bot
   const twoRounds = (r0: unknown[], r1: unknown[]) =>
     attempt([{ index: 0, runs: r0 }, { index: 1, runs: r1 }]);
   const completion = () => updateAttempt.mock.calls[0][0].data;
+  // R55: [model, excludedFromRanking] per round, straight off the response
+  const flags = async (res: Response) =>
+    (await res.json()).rounds.map((rd: { runs: { model: { displayName: string };
+      excludedFromRanking: boolean }[] }) =>
+      rd.runs.map((x) => [x.model.displayName, x.excludedFromRanking]));
 
   // The ONLY behaviour R10 changes. Without it round 0 ranks [0, 1.0] with
   // the 0 taking 2/3 of the weight -> 1/3, and the deactivated model's 500
@@ -434,11 +439,14 @@ describe("GET /api/attempts/[id]: R10 — a model with no round-1 run leaves bot
       [mrun("kept", 1.0)],
     ));
 
-    await req("a1");
+    const res = await req("a1");
 
     expect(completion().status).toBe("completed");
     expect(completion().finalScore).toBeCloseTo(100, 4); // ranks "kept" alone, not [0, 1.0]
     expect(completion().totalTokens).toBe(1000);         // the dropped run's 500 excluded
+    // R55: the flag agrees with the ranking that just happened, and the
+    // excluded run keeps the score it actually earned (spec L20).
+    expect(await flags(res)).toEqual([[["kept", false], ["deactivated", true]], [["kept", false]]]);
   });
 
   // Neighbour 1: already excluded by the survivor filter. R10 must be a
@@ -450,11 +458,12 @@ describe("GET /api/attempts/[id]: R10 — a model with no round-1 run leaves bot
       [mrun("ok", 1.0)],
     ));
 
-    await req("a1");
+    const res = await req("a1");
 
     expect(completion().status).toBe("completed"); // NOT voided
     expect(completion().finalScore).toBeCloseTo(100, 4);
     expect(completion().totalTokens).toBe(1000);   // platform-errored spend already excluded
+    expect(await flags(res)).toEqual([[["dead", true], ["ok", false]], [["ok", false]]]);
   });
 
   // Neighbour 2: the case most likely to break. "b" has a round-1 run -- it
@@ -467,10 +476,39 @@ describe("GET /api/attempts/[id]: R10 — a model with no round-1 run leaves bot
       [mrun("a", 1.0), mrun("b", null, "platform")],
     ));
 
-    await req("a1");
+    const res = await req("a1");
 
     // round 0 still ranks BOTH: worst-weighted 0.5×2/3 + 1.0×1/3 = 2/3
     expect(completion().finalScore).toBeCloseTo((0.4 * (2 / 3) + 0.6 * 1) * 100, 4);
     expect(completion().totalTokens).toBe(1500); // a0 + b0 + a1; b's round-1 spend excluded
+    // "b" ran in round 1, so R53 excludes nothing -- flag false everywhere.
+    // NOTE this flag is the R53 rule only: "b"'s round-1 run IS dropped from
+    // that round's ranking by scoreAttempt's platform survivor filter, which
+    // errorKind already exposes separately.
+    expect(await flags(res)).toEqual([[["a", false], ["b", false]],
+                                      [["a", false], ["b", false]]]);
+  });
+
+  it("keeps an excluded run's real runScore in the payload rather than zeroing it", async () => {
+    findAttempt.mockResolvedValue(twoRounds(
+      [mrun("kept", 1.0), mrun("deactivated", 0.42)],
+      [mrun("kept", 1.0)],
+    ));
+
+    const res = await req("a1");
+    const gone = (await res.json()).rounds[0].runs.find(
+      (x: { model: { displayName: string } }) => x.model.displayName === "deactivated");
+
+    expect(gone.excludedFromRanking).toBe(true);
+    expect(gone.runScore).toBe(0.42); // marked not-counted, NOT zeroed
+  });
+
+  it("flags nothing while round 1 does not exist yet", async () => {
+    findAttempt.mockResolvedValue(attempt([{ index: 0, runs: [mrun("a", 1.0), mrun("b", 1.0)] }]));
+
+    const res = await req("a1");
+
+    expect(await flags(res)).toEqual([[["a", false], ["b", false]]]);
+    expect(updateAttempt).not.toHaveBeenCalled();
   });
 });

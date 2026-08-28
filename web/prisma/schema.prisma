@@ -86,6 +86,14 @@ model Run {
   tests            TestResult[]
   benchmarks       BenchmarkResult[]
   jobs             Job[]
+  // R54: one run per model per round is what the product means by a Run
+  // (spec L83, "Run = one model x one round"), and nothing enforced it. Two
+  // rows for one model in a round silently corrupt scoring rather than
+  // crashing: weightedRound ranks n=2 instead of n=1 and the model's tokens
+  // are counted twice. Unreachable through the app today (eligibleModelIds
+  // dedupes the fan-out roster), but that is a property of the current call
+  // graph, not of the data -- admin re-run or retry tooling would break it.
+  @@unique([roundId, modelId])
   @@index([roundId])
 }
 

@@ -131,10 +131,16 @@ def test_round1_generate_uses_own_prior_code_and_test_includes_extend(fixture_ch
 
 
 def _seed_jobs(job_type, n):
-    """Lean seed for n Jobs of job_type, each on its own Run (sharing one
-    user/challenge/attempt/round/model chain -- irrelevant to a queue test).
-    Returns the n run ids in creation order (== FIFO claim order)."""
-    uid, chid, aid, rid, mid = (str(uuid.uuid4()) for _ in range(5))
+    """Lean seed for n Jobs of job_type, each on its own Run + Model (sharing
+    one user/challenge/attempt/round chain -- irrelevant to a queue test).
+    Returns the n run ids in creation order (== FIFO claim order).
+
+    R54: a Model per Run, not one shared by all n. Run now carries
+    @@unique([roundId, modelId]) -- "one model x one round" is what the
+    product means by a Run -- so n runs sharing a model in one round is a
+    row the database no longer accepts. Real fan-out is one run per model
+    anyway; this only ever shared one to save an INSERT."""
+    uid, chid, aid, rid = (str(uuid.uuid4()) for _ in range(4))
     db.q('INSERT INTO "User"(id,email,name,"passwordHash") VALUES (%s,%s,%s,%s)',
          (uid, f"{uid}@t.io", "t", "x"))
     db.q('INSERT INTO "Challenge"(id,slug,title,description,"interfaceText",difficulty,'
@@ -142,10 +148,11 @@ def _seed_jobs(job_type, n):
          (chid, chid, "t", "d", "i", "easy", 1000, "f", ["m"], "published"))
     db.q('INSERT INTO "Attempt"(id,"userId","challengeId") VALUES (%s,%s,%s)', (aid, uid, chid))
     db.q('INSERT INTO "Round"(id,"attemptId",index,"promptText") VALUES (%s,%s,0,%s)', (rid, aid, "p"))
-    db.q('INSERT INTO "Model"(id,"openrouterId","displayName","sizeTier") VALUES (%s,%s,%s,%s)',
-         (mid, str(uuid.uuid4()), "M", "small"))
     run_ids = [str(uuid.uuid4()) for _ in range(n)]
     for run_id in run_ids:
+        mid = str(uuid.uuid4())
+        db.q('INSERT INTO "Model"(id,"openrouterId","displayName","sizeTier") VALUES (%s,%s,%s,%s)',
+             (mid, str(uuid.uuid4()), "M", "small"))
         db.q('INSERT INTO "Run"(id,"roundId","modelId") VALUES (%s,%s,%s)', (run_id, rid, mid))
         db.q('INSERT INTO "Job"(id,"runId",type) VALUES (%s,%s,%s)', (str(uuid.uuid4()), run_id, job_type))
     return run_ids
