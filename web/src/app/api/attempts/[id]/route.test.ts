@@ -463,7 +463,14 @@ describe("GET /api/attempts/[id]: R10 — a model with no round-1 run leaves bot
     expect(completion().status).toBe("completed"); // NOT voided
     expect(completion().finalScore).toBeCloseTo(100, 4);
     expect(completion().totalTokens).toBe(1000);   // platform-errored spend already excluded
+    // Both terms fire on "dead" and they coincide by construction: Task 14
+    // skips a platform-errored model at round-1 fan-out, so a round-0
+    // platform fault always also means no round-1 run. Asserted so the
+    // coincidence is documented rather than assumed.
     expect(await flags(res)).toEqual([[["dead", true], ["ok", false]], [["ok", false]]]);
+    const round1Models = (await (await req("a1")).json()).rounds[1].runs.map(
+      (x: { model: { displayName: string } }) => x.model.displayName);
+    expect(round1Models).not.toContain("dead");
   });
 
   // Neighbour 2: the case most likely to break. "b" has a round-1 run -- it
@@ -481,12 +488,14 @@ describe("GET /api/attempts/[id]: R10 — a model with no round-1 run leaves bot
     // round 0 still ranks BOTH: worst-weighted 0.5×2/3 + 1.0×1/3 = 2/3
     expect(completion().finalScore).toBeCloseTo((0.4 * (2 / 3) + 0.6 * 1) * 100, 4);
     expect(completion().totalTokens).toBe(1500); // a0 + b0 + a1; b's round-1 spend excluded
-    // "b" ran in round 1, so R53 excludes nothing -- flag false everywhere.
-    // NOTE this flag is the R53 rule only: "b"'s round-1 run IS dropped from
-    // that round's ranking by scoreAttempt's platform survivor filter, which
-    // errorKind already exposes separately.
+    // R56, and the case that proves the flag's two terms are independent
+    // rather than redundant: "b" ran in round 1, so the no-round-1-run term
+    // excludes nothing and its round-0 run is genuinely counted (false) --
+    // while its round-1 run is excluded by the platform term alone (true).
+    // Under the R55 predicate that round-1 run read false while scoreAttempt
+    // dropped it, which is the lie R56 removes.
     expect(await flags(res)).toEqual([[["a", false], ["b", false]],
-                                      [["a", false], ["b", false]]]);
+                                      [["a", false], ["b", true]]]);
   });
 
   it("keeps an excluded run's real runScore in the payload rather than zeroing it", async () => {

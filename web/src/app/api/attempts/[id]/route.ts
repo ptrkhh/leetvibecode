@@ -129,16 +129,25 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const [r0, r1] = [0, 1].map((i) => rounds.find((r) => r.index === i));
   const allTerminal = (r: typeof r0) =>
     !!r && r.runs.length > 0 && r.runs.every((x) => TERMINAL.includes(x.status));
-  // R53/R55: ONE predicate, built once here, decides BOTH which round-0 runs
-  // reach the ranking and which runs the response marks as not counted. They
-  // are the same expression, so they cannot drift apart -- and it lives
-  // outside the completion block because the dashboard needs the flag on
-  // every poll, including polls of an attempt that completed on an earlier
-  // one. Before round 1 exists nothing is excluded, which is what R10's
-  // "once round 1 exists" qualifier means.
+  // R53/R55/R56: ONE predicate, built once here, decides BOTH which runs reach
+  // the ranking and which runs the response marks as not counted. They are the
+  // same expression, so they cannot drift apart -- and it lives outside the
+  // completion block because the dashboard needs the flag on every poll,
+  // including polls of an attempt that completed on an earlier one.
+  //
+  // Two independent reasons a run does not count, and both belong here (R56):
+  // a platform fault (spec L126 -- infra luck is excluded so it can never cap
+  // a score) and having no round-1 run at all (R10 -- deactivated
+  // mid-attempt, or platform-errored in round 0 and skipped at round-1
+  // fan-out). A field named excludedFromRanking that reads false for a run
+  // that IS excluded would be worse than no field: Task 19 would get the math
+  // strip wrong precisely by reading it correctly.
+  //
+  // Before round 1 exists the second term is vacuous, which is what R10's
+  // "once round 1 exists" qualifier means; the platform term still applies.
   const ranR1 = r1 && new Set(r1.runs.map((x) => x.model.openrouterId));
-  const counted = (x: { model: { openrouterId: string } }) =>
-    !ranR1 || ranR1.has(x.model.openrouterId);
+  const counted = (x: { errorKind: string | null; model: { openrouterId: string } }) =>
+    x.errorKind !== "platform" && (!ranR1 || ranR1.has(x.model.openrouterId));
 
   if (attempt.status === "active" && allTerminal(r0) && allTerminal(r1)) {
     const toScored = (runs: NonNullable<typeof r0>["runs"]) => runs.map((x) => ({
@@ -163,8 +172,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // reaches scoreAttempt: a mid-attempt deactivation is a platform-side
     // decision the player did not cause, so charging them its tokens would
     // lower their token_factor for someone else's action.
+    // R56: BOTH rounds are filtered by the same predicate the flag uses, so
+    // the array handed to scoreAttempt and the serialized flag cannot
+    // disagree. scoreAttempt still drops platform runs itself -- that filter
+    // is now a redundant backstop rather than the only thing making the flag
+    // true, which is the point: the flag no longer depends on a rule owned by
+    // another module. Numbers are unchanged either way (verified).
     const out = scoreAttempt(
-      toScored(r0!.runs.filter(counted)), toScored(r1!.runs), attempt.challenge.parTokens);
+      toScored(r0!.runs.filter(counted)), toScored(r1!.runs.filter(counted)),
+      attempt.challenge.parTokens);
     // updateMany, not update: reading status above and writing it here are
     // not atomic, and the dashboard polls this endpoint every 2s, so two
     // overlapping polls both reach this line. Scoping the write to the
@@ -179,9 +195,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             finalScore: out.finalScore, totalTokens: out.totalTokens } });
     attempt = (await load())!; // unconditional: on a lost race the in-hand copy is stale too
   }
-  // R55: a computed field, added after the query, never part of the select --
-  // it says whether the run COUNTS toward its round's ranking, not what it
-  // scored. An excluded run keeps its real runScore in the payload: spec L20
+  // R55/R56: a computed field, added after the query, never part of the
+  // select -- it says whether the run COUNTS toward its round's ranking, not
+  // what it scored. An excluded run keeps its real runScore in the payload: spec L20
   // requires the card to show what the model actually achieved, and marking
   // a run as not-counted is not the same as zeroing it. Carried on every run
   // rather than round-0 only, so Task 19's single Run type gets a plain
