@@ -1,10 +1,12 @@
 import re
 
-FENCE = re.compile(r"```([^\n`]*)\n(.*?)```", re.S)
+FENCE = re.compile(
+    r"^(?P<ticks>`{3,})[ \t]*(?P<lang>[^\n`]*)\n(?P<code>.*?)\n?^(?P=ticks)`*[ \t]*$",
+    re.S | re.M)
 
 
 def extract_code(text: str) -> str | None:
-    blocks = [(lang.strip().lower(), body) for lang, body in FENCE.findall(text)]
+    blocks = [(m.group("lang").strip().lower(), m.group("code")) for m in FENCE.finditer(text)]
     tagged = [b for lang, b in blocks if lang in ("python", "py")]
     if tagged:
         return tagged[-1].strip()
