@@ -183,6 +183,31 @@ def test_run_tests_parametrized_correct_solution_scores_normally():
 
 
 @pytest.mark.docker
+def test_run_tests_parametrize_value_containing_double_colon_scores_normally():
+    # R37 (Critical, same bug class as R36, one line over): the name
+    # cross-check used `row["name"].rsplit("::", 1)[-1]` -- rightmost "::"
+    # -- assuming exactly one "::" in "classname::name". classname (a dotted
+    # module/class path) never contains "::", but a parametrize bracket's
+    # content comes from the parameter VALUE, so it can: a slice literal
+    # ("::2"), IPv6 ("::1"), or a C++/Rust namespace ("std::vector") are all
+    # plausible test data for a coding judge. No explicit `ids=` here, so
+    # this exercises pytest's own default id generation, not a
+    # hand-picked id. Confirmed live before this fix: rsplit against
+    # "test_build::test_echo[a::b]" cut inside the bracket and yielded
+    # "b]", which can never match the scraped "test_echo", rejecting this
+    # exact 100%-correct solution.
+    results, sub_err, plat_err = run_tests(
+        "def echo(s):\n    return s\n",
+        {"test_build.py": "import pytest\nfrom solution import echo\n\n"
+                          "@pytest.mark.parametrize('s', ['a::b', 'std::vector', '::1'])\n"
+                          "def test_echo(s):\n"
+                          "    assert echo(s) == s\n"})
+    assert plat_err is None and sub_err is None
+    assert len(results) == 3
+    assert all(r["passed"] for r in results)
+
+
+@pytest.mark.docker
 def test_run_tests_class_based_test_scores_normally():
     # Regression guard: class-based tests already worked before the R36 fix
     # (an indented `def test_y` already matched the old `^\s*def` regex, and

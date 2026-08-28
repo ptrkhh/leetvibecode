@@ -107,7 +107,16 @@ def run_tests(code: str, test_files: dict[str, str]):
     expected = set()
     for content in test_files.values():
         expected.update(_TEST_DEF_RE.findall(content))
-    got = {row["name"].rsplit("::", 1)[-1].split("[", 1)[0] for row in results}
+    # R37: was rsplit (rightmost "::"). classname is a dotted module/class
+    # path and never contains "::", but a parametrize bracket can -- its
+    # content comes from the parameter VALUE (a slice literal "::2", IPv6
+    # "::1", a C++/Rust namespace "std::vector" are all plausible test
+    # data), and rsplit then cuts inside the bracket instead of at the
+    # true classname/name boundary. split (leftmost) is always correct
+    # since that boundary is the first "::" no matter what's in the
+    # bracket. Confirmed live: rsplit against "test_build::test_echo[a::b]"
+    # yielded "b]", which can never match the scraped "test_echo".
+    got = {row["name"].split("::", 1)[-1].split("[", 1)[0] for row in results}
     if got != expected:
         return [], "tests produced unexpected results", None
     return results, None, None
