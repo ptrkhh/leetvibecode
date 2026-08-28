@@ -23,10 +23,29 @@ def run_bench(code: str, bench_py: str):
     if not raw:
         return [{"inputSize": 0, "timeMs": 0, "memoryMb": None, "timedOut": True}], "benchmark crashed", None
     try:
-        return json.loads(raw), None, None
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
+            raise ValueError("bench.json must be a JSON list")
+        # R41: json.loads succeeding is not enough -- bench.json is
+        # attacker-controlled by the same primitive as the R34 forgery, so a
+        # well-formed-JSON-but-wrong-shape payload (a bare scalar, a list of
+        # non-dicts, a dict missing a required key, ...) must not be handed
+        # back verbatim to a caller trusting the documented list[dict]
+        # contract. Reshape into exactly that contract from named lookups;
+        # any row that can't supply all four keys raises here (KeyError on a
+        # missing key, TypeError on a non-dict element, ValueError on a
+        # non-coercible value) and is caught below, same as malformed JSON.
+        rows = [{
+            "inputSize": int(row["inputSize"]),
+            "timeMs": float(row["timeMs"]),
+            "memoryMb": None if row["memoryMb"] is None else float(row["memoryMb"]),
+            "timedOut": bool(row["timedOut"]),
+        } for row in parsed]
     except Exception:
-        # R38: bench.json is untrusted content (hostile OR just corrupted) --
-        # any way parsing it blows up must land here as a submission_error,
-        # not escape and crash the judge. Mirrors testing.py's R35 guard
-        # around parse_junit.
+        # R38/R41: bench.json is untrusted content (hostile OR just
+        # corrupted) -- any way it fails to parse OR fails to match the row
+        # contract must land here as a submission_error, not escape and
+        # crash the judge (or a downstream caller trusting the contract).
+        # Mirrors testing.py's R35 guard around parse_junit.
         return [{"inputSize": 0, "timeMs": 0, "memoryMb": None, "timedOut": True}], "benchmark produced unreadable results", None
+    return rows, None, None

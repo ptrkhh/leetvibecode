@@ -47,6 +47,49 @@ def test_run_bench_malformed_json_becomes_submission_error(monkeypatch):
     assert plat_err is None
 
 
+def test_run_bench_scalar_json_becomes_submission_error(monkeypatch):
+    # R41: json.loads("42") succeeds -- it's valid JSON -- but yields an int,
+    # not a list[dict]. R38's guard only covers json.loads RAISING; passing
+    # this through verbatim would violate run_bench's own documented
+    # list[dict] return contract for any real consumer.
+    def fake_run_sandbox(files, cmd, timeout_s=30, keep=()):
+        return runner.SandboxResult(0, False, {"bench.json": "42"}, None)
+
+    monkeypatch.setattr(benching, "run_sandbox", fake_run_sandbox)
+    rows, sub_err, plat_err = run_bench("code", BENCH)
+    assert rows == [{"inputSize": 0, "timeMs": 0, "memoryMb": None, "timedOut": True}]
+    assert sub_err
+    assert plat_err is None
+
+
+def test_run_bench_list_of_non_dicts_becomes_submission_error(monkeypatch):
+    # R41: a well-formed JSON list whose elements aren't row dicts at all.
+    def fake_run_sandbox(files, cmd, timeout_s=30, keep=()):
+        return runner.SandboxResult(0, False, {"bench.json": "[1, 2, 3]"}, None)
+
+    monkeypatch.setattr(benching, "run_sandbox", fake_run_sandbox)
+    rows, sub_err, plat_err = run_bench("code", BENCH)
+    assert rows == [{"inputSize": 0, "timeMs": 0, "memoryMb": None, "timedOut": True}]
+    assert sub_err
+    assert plat_err is None
+
+
+def test_run_bench_dict_missing_required_key_becomes_submission_error(monkeypatch):
+    # R41: a list of real dicts, but one is missing a documented key
+    # (memoryMb) -- passing it through would KeyError in any consumer that
+    # reads row["memoryMb"].
+    forged = '[{"inputSize": 100, "timeMs": 1.0, "timedOut": false}]'
+
+    def fake_run_sandbox(files, cmd, timeout_s=30, keep=()):
+        return runner.SandboxResult(0, False, {"bench.json": forged}, None)
+
+    monkeypatch.setattr(benching, "run_sandbox", fake_run_sandbox)
+    rows, sub_err, plat_err = run_bench("code", BENCH)
+    assert rows == [{"inputSize": 0, "timeMs": 0, "memoryMb": None, "timedOut": True}]
+    assert sub_err
+    assert plat_err is None
+
+
 @pytest.mark.docker
 def test_bench_reports_median_rows_per_size():
     rows, sub_err, plat_err = run_bench("def total(xs):\n    return sum(xs)\n", BENCH)
