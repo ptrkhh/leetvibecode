@@ -64,6 +64,90 @@ def test_run_tests_platform_error_is_not_converted_to_submission_error(monkeypat
     assert plat_err == "sandbox infrastructure failure: boom"
 
 
+def test_parse_junit_whitespace_only_message_does_not_crash():
+    # R35: "   ".strip().splitlines() == [] -- indexing [0] into that used
+    # to raise an uncaught IndexError. Confirmed live before this fix.
+    xml = ('<?xml version="1.0"?><testsuites><testsuite name="pytest">'
+           '<testcase classname="test_x" name="test_bad" time="0.0">'
+           '<failure message="   "/></testcase>'
+           "</testsuite></testsuites>")
+    rows = parse_junit(xml)
+    assert rows[0]["passed"] is False
+    assert rows[0]["message"] is None  # nothing meaningful survives whitespace
+
+
+def test_run_tests_nonnumeric_time_becomes_submission_error(monkeypatch):
+    # R35: float(case.get("time")) raises ValueError on a non-numeric time
+    # attribute -- confirmed live before this fix. run_tests's guard around
+    # parse_junit was narrowed to `except ET.ParseError`, which doesn't
+    # catch this; it must not crash, it must report a clean submission_error
+    # like any other malformed result.xml.
+    forged = ('<?xml version="1.0"?><testsuites><testsuite name="pytest">'
+              '<testcase classname="test_build" name="test_ok" time="abc"/>'
+              "</testsuite></testsuites>")
+
+    def fake_run_sandbox(files, cmd, timeout_s=30, keep=()):
+        return runner.SandboxResult(0, False, {"result.xml": forged}, None)
+
+    monkeypatch.setattr(testing, "run_sandbox", fake_run_sandbox)
+    results, sub_err, plat_err = run_tests(
+        "def add(a, b):\n    return a + b\n",
+        {"test_build.py": "from solution import add\ndef test_ok():\n    assert add(1, 2) == 3\n"})
+    assert results == []
+    assert sub_err
+    assert plat_err is None
+
+
+def test_run_tests_rejects_forged_result_with_wrong_test_names(monkeypatch):
+    # R34 (score forgery, defense-in-depth): hidden tests reach solution.py
+    # via `import solution`, so solution.py's MODULE-LEVEL code runs during
+    # pytest's own collection -- a submission can pre-write an all-passing
+    # result.xml and os._exit(0) before pytest's real writer ever runs.
+    # Reproduced live: an unmodified solution.py that never even defines
+    # `add` scored a perfect 2/2 with sub_err=None this way before this fix.
+    # This is the NAIVE version of the attack: a forged result claiming
+    # names that don't match what the judge actually asked for. (A
+    # sophisticated attacker who reads test_build.py in-sandbox and forges
+    # matching names is NOT stopped by this -- see the ponytail comment in
+    # testing.py; that residual is architectural, not fixable here.)
+    forged = ('<?xml version="1.0"?><testsuites><testsuite name="pytest">'
+              '<testcase classname="test_build" name="test_fake" time="0.0"/>'
+              "</testsuite></testsuites>")
+
+    def fake_run_sandbox(files, cmd, timeout_s=30, keep=()):
+        return runner.SandboxResult(0, False, {"result.xml": forged}, None)
+
+    monkeypatch.setattr(testing, "run_sandbox", fake_run_sandbox)
+    results, sub_err, plat_err = run_tests(
+        "def add(a, b):\n    return a + b\n",
+        {"test_build.py": "from solution import add\ndef test_ok():\n    assert add(1, 2) == 3\n"})
+    assert results == []
+    assert sub_err  # rejected as a submission fault, not scored as a pass
+    assert plat_err is None
+
+
+def test_run_tests_rejects_exit_code_inconsistent_with_xml(monkeypatch):
+    # R34, second layer: a forged result.xml claiming every test passed
+    # while the sandboxed process actually exited non-zero is internally
+    # inconsistent -- pytest's own contract is exit 0 iff every collected
+    # test passed. Uses the real test name so only the exit-code check (not
+    # the name cross-check above) is what catches this one.
+    forged = ('<?xml version="1.0"?><testsuites><testsuite name="pytest">'
+              '<testcase classname="test_build" name="test_ok" time="0.0"/>'
+              "</testsuite></testsuites>")
+
+    def fake_run_sandbox(files, cmd, timeout_s=30, keep=()):
+        return runner.SandboxResult(1, False, {"result.xml": forged}, None)  # exit 1, XML claims pass
+
+    monkeypatch.setattr(testing, "run_sandbox", fake_run_sandbox)
+    results, sub_err, plat_err = run_tests(
+        "def add(a, b):\n    return a + b\n",
+        {"test_build.py": "from solution import add\ndef test_ok():\n    assert add(1, 2) == 3\n"})
+    assert results == []
+    assert sub_err
+    assert plat_err is None
+
+
 @pytest.mark.docker
 def test_run_tests_end_to_end():
     results, sub_err, plat_err = run_tests(
