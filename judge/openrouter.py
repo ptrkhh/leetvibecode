@@ -50,10 +50,13 @@ def generate(openrouter_id, messages, slug):
             )
             r.raise_for_status()
             body = r.json()
-            usage = body.get("usage", {})
-            return (body["choices"][0]["message"]["content"],
-                    int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0)))
-        except (httpx.HTTPError, KeyError, ValueError) as e:
+            choices = body.get("choices") or []
+            if not choices:
+                raise ValueError("empty choices in response")
+            usage = body.get("usage") or {}
+            return (choices[0]["message"]["content"],
+                    int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0))
+        except (httpx.HTTPError, KeyError, ValueError, IndexError, TypeError) as e:
             last = e
             if attempt < 2:  # R17c: no sleep after the final failed attempt
                 time.sleep(2 * 2 ** attempt)

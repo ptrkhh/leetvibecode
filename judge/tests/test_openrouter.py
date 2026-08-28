@@ -58,6 +58,42 @@ def test_generate_retries_then_raises_platform_error(monkeypatch):
     assert sleeps == [2, 4]  # R17c: backoff between attempts, none after the final failure
 
 
+def test_generate_empty_choices_retries_then_raises_platform_error(monkeypatch):
+    # R23: a 200 with "choices": [] is a real OpenRouter/OpenAI-compatible shape
+    # (filtered/degenerate completion). It must be a retryable platform fault,
+    # not an uncaught IndexError escaping on the first attempt.
+    monkeypatch.delenv("OPENROUTER_MOCK", raising=False)  # R17
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    monkeypatch.setattr(openrouter, "_client", canned(handler))
+    monkeypatch.setattr(openrouter.time, "sleep", lambda s: None)
+    with pytest.raises(PlatformError):
+        openrouter.generate("m/x", [{"role": "user", "content": "hi"}], "slug")
+    assert calls["n"] == 3  # initial + 2 retries, same budget as any other platform fault
+
+
+def test_generate_null_usage_succeeds_with_zero_tokens(monkeypatch):
+    # R23 judgment call: null prompt_tokens/completion_tokens (key present, value
+    # None) is a degenerate-but-usable response — real code came back, only the
+    # metering is missing. Treat it as success reporting 0/0 rather than burning
+    # 3 attempts + backoff on a response that already has a usable answer; 0 also
+    # undercounts rather than overcounts against the token cap/quota.
+    monkeypatch.delenv("OPENROUTER_MOCK", raising=False)  # R17
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    def handler(request):
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "```python\nok\n```"}}],
+            "usage": {"prompt_tokens": None, "completion_tokens": None}})
+    monkeypatch.setattr(openrouter, "_client", canned(handler))
+    text, pt, ct = openrouter.generate("m/x", [{"role": "user", "content": "hi"}], "slug")
+    assert "ok" in text and (pt, ct) == (0, 0)
+
+
 def test_generate_mock_mode_returns_reference_solution(tmp_path, monkeypatch):
     # R17b: mock mode is what Task 23's E2E run depends on (returns each
     # challenge's reference solution, zero token spend). Point CHALLENGES_DIR
