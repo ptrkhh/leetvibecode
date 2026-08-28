@@ -143,3 +143,47 @@ export async function listUserAttempts(userId: string) {
     status: a.status, finalScore: a.finalScore, startedAt: a.startedAt,
   }));
 }
+
+export type ChallengeListing = {
+  slug: string;
+  title: string;
+  difficulty: string;
+  parTokens: number;
+  best: number | null;
+};
+
+// R12 again, for Task 17's home page. Deliberately NOT listPublishedChallenges
+// plus a second pass: that helper's select is asserted (queries.test.ts) to
+// exclude `id`, because GET /api/challenges has no use for one, and a
+// personal-best groupBy can only key on challengeId. So the join key is
+// selected here and stripped before returning -- the declared return type is
+// what makes that structural rather than a promise, so no caller can render an
+// id it never receives.
+//
+// The plan's version ran the challenge query a SECOND time with no `where` at
+// all (every draft included) purely to map id -> slug, then called
+// bests.find() inside .map(), which is O(challenges x attempts) on every
+// render. One query, one Map, one pass.
+//
+// status: "completed" is the entire point of the where clause: an active
+// attempt has no score yet and a voided one is explicitly not scored
+// (spec L124, L127), so neither may ever surface as a personal best. SQL MAX
+// ignores NULLs, so a completed attempt whose finalScore was never written
+// contributes nothing rather than a 0 -- the same NULL trap Task 16 hit from
+// the other side.
+export async function listChallengesWithBests(userId?: string): Promise<ChallengeListing[]> {
+  const challenges = await prisma.challenge.findMany({
+    where: { status: "published" },
+    select: { id: true, slug: true, title: true, difficulty: true, parTokens: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const bests = userId
+    ? await prisma.attempt.groupBy({
+        by: ["challengeId"],
+        _max: { finalScore: true },
+        where: { userId, status: "completed" },
+      })
+    : [];
+  const bestBy = new Map(bests.map((b) => [b.challengeId, b._max.finalScore]));
+  return challenges.map(({ id, ...c }) => ({ ...c, best: bestBy.get(id) ?? null }));
+}

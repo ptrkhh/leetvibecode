@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "./db";
-import { getLeaderboard, listUserAttempts } from "./queries";
+import { getLeaderboard, listChallengesWithBests, listUserAttempts } from "./queries";
 
 // Real Postgres, deliberately not a mock. The leaderboard is hand-written SQL
 // (DISTINCT ON + RANK + a total order); a mocked $queryRaw would only assert
@@ -51,6 +51,8 @@ let draft: { id: string; slug: string };
 let empty: { id: string; slug: string };
 let alice: { id: string };
 let bob: { id: string };
+let carol: { id: string };
+let dave: { id: string };
 
 beforeAll(async () => {
   [main, other, cap, draft, empty] = await Promise.all([
@@ -61,8 +63,8 @@ beforeAll(async () => {
     mkChallenge("empty", "published"),
   ]);
 
-  const carol = await mkUser("carol", "Carol");
-  const dave = await mkUser("dave", "Dave");
+  carol = await mkUser("carol", "Carol");
+  dave = await mkUser("dave", "Dave");
   [alice, bob] = await Promise.all([mkUser("alice", "Alice"), mkUser("bob", "Bob")]);
 
   // Alice: two completed attempts. The BEST one (90) must be the one that
@@ -262,5 +264,75 @@ describe("listUserAttempts", () => {
 
     expect(rows[0]).not.toHaveProperty("userId");
     expect(rows[0]).not.toHaveProperty("challengeId");
+  });
+});
+
+// The dev database holds published challenges from every earlier task, so
+// every assertion here looks up THIS run's slugs inside the result. Nothing
+// asserts a global length -- the same rule the file already follows.
+const bestOf = (rows: Awaited<ReturnType<typeof listChallengesWithBests>>, slug: string) =>
+  rows.find((r) => r.slug === slug);
+
+describe("listChallengesWithBests", () => {
+  it("attaches the user's highest completed score to each published challenge", async () => {
+    const rows = await listChallengesWithBests(alice.id);
+
+    // Alice completed 90 and 70 on main: the best one, not the latest.
+    expect(bestOf(rows, main.slug)).toEqual({
+      slug: main.slug, title: "T main", difficulty: "easy", parTokens: 100, best: 90,
+    });
+    expect(bestOf(rows, other.slug)!.best).toBe(99);
+    // Published, nobody has completed anything on it.
+    expect(bestOf(rows, empty.slug)!.best).toBeNull();
+  });
+
+  // The hard requirement carried from Tasks 14/15/16. Carol holds a VOIDED
+  // attempt scoring 100, an ACTIVE one, and a completed one whose finalScore
+  // was never written. None of the three is a personal best, and a 100 showing
+  // up here would be a score for an attempt the platform explicitly refused to
+  // score.
+  it("never counts a voided, active, or unscored attempt as a best", async () => {
+    const rows = await listChallengesWithBests(carol.id);
+
+    expect(bestOf(rows, main.slug)!.best).toBeNull();
+    expect(rows.map((r) => r.best)).not.toContain(100);
+  });
+
+  it("scopes bests to the user -- Dave's 50 on main is not Alice's 90", async () => {
+    const [aliceRows, daveRows] = await Promise.all([
+      listChallengesWithBests(alice.id), listChallengesWithBests(dave.id),
+    ]);
+
+    expect(bestOf(aliceRows, main.slug)!.best).toBe(90);
+    expect(bestOf(daveRows, main.slug)!.best).toBe(50);
+    expect(bestOf(daveRows, other.slug)!.best).toBeNull();
+  });
+
+  // The plan's version ran a second findMany with no `where` at all, so an
+  // unpublished challenge could reach the home page through the id->slug map.
+  it("omits an unpublished challenge even when the user completed it", async () => {
+    const rows = await listChallengesWithBests(alice.id);
+
+    expect(bestOf(rows, draft.slug)).toBeUndefined();
+    expect(rows.map((r) => r.best)).not.toContain(88);
+  });
+
+  it("returns every published challenge with a null best when nobody is logged in", async () => {
+    const rows = await listChallengesWithBests();
+
+    expect(bestOf(rows, main.slug)).toEqual({
+      slug: main.slug, title: "T main", difficulty: "easy", parTokens: 100, best: null,
+    });
+    expect(bestOf(rows, draft.slug)).toBeUndefined();
+  });
+
+  // The join key is selected but must not survive the return: the home page is
+  // a server component today, but a route handler is exactly what R12 expects
+  // to call this next.
+  it("never returns the challenge id", async () => {
+    const rows = await listChallengesWithBests(alice.id);
+
+    expect(Object.keys(bestOf(rows, main.slug)!).sort())
+      .toEqual(["best", "difficulty", "parTokens", "slug", "title"]);
   });
 });
