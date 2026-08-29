@@ -278,6 +278,44 @@ def test_loop_survives_when_the_recovery_write_itself_raises(monkeypatch):
     assert calls["n"] >= 1  # the flaky recovery path was actually exercised
 
 
+def test_stale_claim_is_requeued_and_reprocessed_but_a_recent_claim_is_left_alone(monkeypatch):
+    # R86: R42's carry, closed. A Job stuck "claimed" past STALE_CLAIM_TIMEOUT_S
+    # means its worker process died before finish_job/_fail ever ran (nothing
+    # else writes state off "claimed") -- db.requeue_stale_claims() must reset
+    # exactly that one back to "pending" so it gets processed again, and must
+    # NOT touch a claim that is merely recent (a real worker still honestly on
+    # it) -- touching that would double-execute live work.
+    job_type = f"stalesweep-{uuid.uuid4().hex[:8]}"
+    stale_run, recent_run = _seed_jobs(job_type, 2)
+    stale_job = db.q('SELECT id FROM "Job" WHERE "runId"=%s', (stale_run,))[0]["id"]
+    recent_job = db.q('SELECT id FROM "Job" WHERE "runId"=%s', (recent_run,))[0]["id"]
+    # Simulate two claims from a worker process that then died -- one old
+    # enough that no legitimate handler could still be running it, one fresh
+    # enough that it's comfortably inside a real job's legitimate runtime.
+    db.q('UPDATE "Job" SET state=%s, "claimedBy"=%s, "claimedAt"=now() - interval \'1 hour\' '
+         "WHERE id=%s", ("claimed", "dead-worker", stale_job))
+    db.q('UPDATE "Job" SET state=%s, "claimedBy"=%s, "claimedAt"=now() WHERE id=%s',
+         ("claimed", "dead-worker", recent_job))
+
+    reclaimed = db.requeue_stale_claims(worker.STALE_CLAIM_TIMEOUT_S)
+    assert stale_job in reclaimed
+    assert recent_job not in reclaimed
+
+    stale_row = db.q('SELECT state, "claimedBy", "claimedAt" FROM "Job" WHERE id=%s', (stale_job,))[0]
+    assert stale_row == {"state": "pending", "claimedBy": None, "claimedAt": None}
+    recent_row = db.q('SELECT state, "claimedBy" FROM "Job" WHERE id=%s', (recent_job,))[0]
+    assert recent_row == {"state": "claimed", "claimedBy": "dead-worker"}  # untouched
+
+    processed = []
+    monkeypatch.setitem(worker.HANDLERS, job_type, lambda run_id: processed.append(run_id))
+    assert worker.work_one(job_type) is True  # the requeued job is claimable again
+    assert processed == [stale_run]
+    assert db.q('SELECT state FROM "Job" WHERE id=%s', (stale_job,))[0]["state"] == "done"
+    # the recent claim never re-entered the pending pool, so there is nothing
+    # left for a second worker to pick up
+    assert worker.work_one(job_type) is False
+
+
 @pytest.fixture()
 def fixture_challenge_no_bench_sizes(tmp_path, monkeypatch):
     # run_bench returns (rows=[], None, None) for an empty SIZES challenge --

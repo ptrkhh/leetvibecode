@@ -125,6 +125,27 @@ describe("safeCallbackUrl", () => {
     }
   });
 
+  // R85, the second live bypass, found in the final whole-branch review of
+  // this same function. Each of these is a full ABSOLUTE URL at our own
+  // origin -- so the FIRST parse's origin check genuinely passes, same-
+  // origin, honestly -- but the pathname it produces is itself a string
+  // that means something different on a SECOND, independent parse: a
+  // leading "//" (direct, or via "\" normalizing to "/") is read as "new
+  // authority" rather than as path content, which is exactly what the
+  // consumer's own later parse of the returned string does. Confirmed end
+  // to end against a production build: a real login followed by a silent
+  // top-level navigation to the attacker's origin.
+  it("refuses a same-origin URL whose path is itself an off-origin reference", () => {
+    for (const bad of [
+      `${ORIGIN}//evil.example/phish`,
+      `${ORIGIN}//evil.example`,
+      `${ORIGIN}/\\evil.example`,
+      `${ORIGIN}/\\evil.example/phish?x=1`,
+      `${ORIGIN}//evil.example/phish#x`,
+    ])
+      expect(param(bad)).toBe("/");
+  });
+
   it("falls back to the home page when there is no parameter at all", () => {
     expect(at("")).toBe("/");
     expect(at("?x=1")).toBe("/");

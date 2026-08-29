@@ -73,7 +73,36 @@ export function safeCallbackUrl(): string {
   try {
     const u = new URL(url, window.location.origin);
     if (u.origin !== window.location.origin) return "/";
-    return u.pathname + u.search + u.hash;
+    const path = u.pathname + u.search + u.hash;
+    // R85: R68 fixed what the FIRST parse above sees; it missed that the
+    // string this function RETURNS is handed to a SECOND, independent parse
+    // -- the router does `new URL(addBasePath(href), location.href)` on it.
+    // `new URL("<origin>//evil.example/phish", origin)` fixes the authority
+    // right after the scheme, so everything from the next "/" on is
+    // unambiguously path content on THIS parse -- `u.origin` above is
+    // genuinely our own origin and that check correctly passes. But
+    // `u.pathname` is now the STRING "//evil.example/phish", and a leading
+    // "//" means something else to a parser meeting it as the START of a
+    // reference rather than as path content past an already-fixed
+    // authority: alone, it is a protocol-relative reference. "<origin>/\
+    // evil.example" reaches the same shape by a different route --
+    // special-scheme parsing normalizes "\" to "/" while building pathname,
+    // so it collapses to the identical "//evil.example". Reproduced live:
+    // a real login, then a silent top-level navigation to the attacker's
+    // origin moments after the victim authenticated.
+    //
+    // The fix is R68's own principle -- run the consumer's parser instead
+    // of modelling it -- applied one level deeper, to the value being
+    // returned rather than only the value received. `path` always starts
+    // with "/" (pathname is never empty), so re-parsing it against our own
+    // origin is exactly what the router's later `new URL(path,
+    // location.href)` will do to it: basePath is unconfigured in this app,
+    // so addBasePath is a no-op here, not merely modelled as one. Any
+    // string whose fresh parse disagrees about the origin is refused,
+    // whatever shape it is -- this cannot be bypassed by a new quirk the
+    // same way a character blocklist can, because it never enumerates one.
+    if (new URL(path, window.location.origin).origin !== window.location.origin) return "/";
+    return path;
   } catch {
     return "/";
   }
