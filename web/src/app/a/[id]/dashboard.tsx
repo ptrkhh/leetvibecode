@@ -227,6 +227,20 @@ export default function Dashboard({ id }: { id: string }) {
               <div className="mt-1 border-t pt-1">
                 round subtotal <b>{math.subtotal.toFixed(3)}</b>
               </div>
+              {/* R70: a chain of rounded displays cannot reproduce an exactly
+                  computed answer -- a sum of N rounded terms is off by up to N
+                  half-ulps at ANY precision, so more decimals do not close it.
+                  R69's equation was closable only because the token factor was
+                  exactly two integers already on the page; this subtotal is
+                  not. Both costed fixes were rejected: exact weight fractions
+                  buy nothing while the scores in the same rows are themselves
+                  toFixed(3) of floats, and summing the rounded contributions
+                  would put a different subtotal on screen than the one feeding
+                  the final score. So it is stated instead. */}
+              <p className="mt-1 text-gray-600">
+                Each contribution is rounded for display and the subtotal is computed at full
+                precision, so adding the rounded rows by hand can differ by one in the last digit.
+              </p>
               {math.excluded.length > 0 && (
                 <p className="mt-2 text-gray-600">
                   Excluded from this ranking, with the weights renormalized over the rest: a run
