@@ -5,11 +5,11 @@ brief: |
   Build an in-memory search index. Documents are added one at a time and can
   then be looked up by any single term they contain, case-insensitively.
 
-  This index is memory-bounded: it lives in RAM next to the corpus it serves,
-  so keep only what a lookup actually needs. Do not retain the original
-  document text, and store each distinct term once no matter how many
-  documents contain it -- a per-document copy of the text, or a scan over the
-  documents at query time, is the wrong shape here.
+  This index is memory-bounded: it lives in RAM beside the corpus it serves,
+  so a lookup has to be answerable from the index alone. An index that goes
+  back to the documents at query time -- scanning them, re-tokenizing them --
+  is really just the corpus plus a scan, and it is the wrong shape here: this
+  index is queried far more often than it is written to.
 interface: |
   class Index:
       def __init__(self):

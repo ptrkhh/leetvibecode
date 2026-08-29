@@ -66,6 +66,7 @@ def test_dedup_and_hashing_still_hold_around_a_delete():
     assert st.put(b"hello world") == h
     assert st.blob_count() == 1
     st.delete(h)                                 # one of the two copies
+    assert st.get(h) == b"hello world"           # the other copy still holds it
     assert st.put(b"hello world") == h           # same content, same hash
     assert st.blob_count() == 1                  # and still exactly one copy
     assert st.get(h) == b"hello world"
