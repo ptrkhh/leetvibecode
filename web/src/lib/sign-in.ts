@@ -39,3 +39,18 @@ export async function signInCredentials(email: string, password: string) {
     return null;
   }
 }
+
+// Where to go after a successful sign-in. `search` is window.location.search;
+// the answer is always a same-origin path, and "/" whenever it cannot be.
+//
+// Lives beside signInCredentials because it is the same story -- every
+// credentials sign-in in the app ends in a redirect -- and because it is the
+// half of it that must not be re-typed anywhere: an unvalidated callbackUrl is
+// an open redirect, so "starts with a slash" alone is not enough. `//evil.com`
+// is protocol-relative and `/\evil.com` is treated the same way by browsers
+// that normalize the backslash, so the second character must be neither. What
+// survives can only be a path, and router.push treats it as one.
+export function safeCallbackUrl(search: string): string {
+  const url = new URLSearchParams(search).get("callbackUrl");
+  return url && /^\/[^/\\]/.test(url) ? url : "/";
+}

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("next-auth/react", () => ({ getProviders: vi.fn(), signIn: vi.fn() }));
 
 import { getProviders, signIn } from "next-auth/react";
-import { signInCredentials } from "./sign-in";
+import { safeCallbackUrl, signInCredentials } from "./sign-in";
 
 const providersMock = getProviders as unknown as Mock;
 const signInMock = signIn as unknown as Mock;
@@ -68,5 +68,28 @@ describe("signInCredentials: the credentials leg", () => {
     signInMock.mockResolvedValueOnce({ ok: false, error: "CredentialsSignin" });
 
     expect(await signInCredentials("a@b.test", "pw")).toEqual({ ok: false, error: "CredentialsSignin" });
+  });
+});
+
+describe("safeCallbackUrl", () => {
+  it("returns a same-origin path", () => {
+    expect(safeCallbackUrl("?callbackUrl=/c/rate-limiter")).toBe("/c/rate-limiter");
+    expect(safeCallbackUrl("?callbackUrl=/c/a%2Fb&other=1")).toBe("/c/a/b");
+  });
+
+  it("refuses anything that could leave the origin", () => {
+    // Protocol-relative, and the backslash form browsers normalize into it.
+    // Both start with a slash, which is why "starts with /" is not the test.
+    for (const bad of [
+      "//evil.example", "/\\evil.example", "https://evil.example",
+      "http://evil.example", "javascript:alert(1)", "evil.example", "",
+    ])
+      expect(safeCallbackUrl(`?callbackUrl=${encodeURIComponent(bad)}`)).toBe("/");
+  });
+
+  it("falls back to the home page when there is no parameter at all", () => {
+    expect(safeCallbackUrl("")).toBe("/");
+    expect(safeCallbackUrl("?x=1")).toBe("/");
+    expect(safeCallbackUrl("?callbackUrl=")).toBe("/");
   });
 });

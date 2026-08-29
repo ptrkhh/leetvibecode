@@ -137,9 +137,21 @@ export async function getLeaderboard(
 // id breaks the startedAt tie for the same reason the leaderboard needs one:
 // without it two attempts started in the same instant reorder between calls,
 // and at the take:100 boundary one of them drops out at random.
+//
+// R66: `rounds: { some: {} }` is an EXISTS, and it has to be in the WHERE
+// rather than in the caller. POST /api/attempts creates the row and
+// POST /api/attempts/<id>/rounds creates round 0, and nothing makes the pair
+// atomic -- so an attempt with no rounds is always a failed start, never a
+// real one in progress (the happy path posts round 0 milliseconds later, and
+// Task 15 can never complete an attempt that has no rounds). Those rows are
+// free to create and, unfiltered, they are NEWER than real history: 200 of
+// them arrive in ~3s and evict genuine attempts through `take: 100` before
+// any caller sees a row. Filtering in a page would filter an
+// already-truncated window and still show nothing. This runs before ORDER BY
+// and LIMIT, which is the only place it works.
 export async function listUserAttempts(userId: string) {
   const rows = await prisma.attempt.findMany({
-    where: { userId },
+    where: { userId, rounds: { some: {} } },
     select: {
       id: true, status: true, finalScore: true, startedAt: true,
       challenge: { select: { slug: true, title: true } },

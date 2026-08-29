@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { signInCredentials } from "../../lib/sign-in";
+import { safeCallbackUrl, signInCredentials } from "../../lib/sign-in";
 
 export default function Login() {
   const router = useRouter();
@@ -38,7 +38,11 @@ export default function Login() {
           setBusy(false);
           setError(message);
         } else {
-          router.push("/");
+          // Read at submit time from window rather than with useSearchParams,
+          // which would force a Suspense boundary around a page that is
+          // otherwise static. Nothing renders it, so there is nothing to
+          // hydrate.
+          router.push(safeCallbackUrl(window.location.search));
           // The nav's session comes from SessionProvider, which signIn already
           // refreshed; this refetches the SERVER render so personal bests
           // appear without a full page reload.

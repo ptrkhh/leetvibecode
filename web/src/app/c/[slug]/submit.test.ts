@@ -34,6 +34,15 @@ describe("submitPrompt: first submit", () => {
     expect(calls()).toEqual(["POST /api/attempts"]);
   });
 
+  it("falls back when the JSON body's error is not a string", async () => {
+    fetchMock.mockResolvedValueOnce(reply(400, { error: 12345 }));
+
+    expect(await submitPrompt(SLUG, PROMPT, null)).toEqual({
+      attemptId: null,
+      error: "could not start an attempt",
+    });
+  });
+
   it("falls back to a generic message when the failure body is not JSON", async () => {
     fetchMock.mockResolvedValueOnce(new Response("<html>502</html>", { status: 502 }));
 
@@ -123,11 +132,33 @@ describe("submitPrompt: the round landed but the answer was lost", () => {
     expect(calls()).toEqual(["GET /api/attempts/att1"]);
   });
 
+  // R67: the guard refused to write either way, but it USED to say "network
+  // error, try again" for every non-2xx -- advice that can never succeed for
+  // an expired session, which returns the same 401 forever and is exactly what
+  // a long edit of a long prompt runs into.
+  it("surfaces the server's own message rather than blaming the network", async () => {
+    fetchMock.mockResolvedValueOnce(reply(401, { error: "login required" }));
+
+    expect(await submitPrompt(SLUG, PROMPT, "att1")).toEqual({ attemptId: "att1", error: "login required" });
+    expect(calls()).toEqual(["GET /api/attempts/att1"]);
+  });
+
   it("writes nothing when the lookup answers with an error", async () => {
     fetchMock.mockResolvedValueOnce(reply(500, { error: "challenge is missing its reference timing" }));
 
-    expect(await submitPrompt(SLUG, PROMPT, "att1")).toEqual({ attemptId: "att1", error: "network error, try again" });
+    expect(await submitPrompt(SLUG, PROMPT, "att1")).toEqual({
+      attemptId: "att1",
+      error: "challenge is missing its reference timing",
+    });
     expect(calls()).toEqual(["GET /api/attempts/att1"]);
+  });
+
+  // A proxy error page is not the server talking, so the network message is
+  // the honest fallback there -- and it must stay reachable.
+  it("falls back to the network message when the failure body carries no message", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("<html>502</html>", { status: 502 }));
+
+    expect(await submitPrompt(SLUG, PROMPT, "att1")).toEqual({ attemptId: "att1", error: "network error, try again" });
   });
 
   it("writes nothing when the lookup body is not the expected shape", async () => {

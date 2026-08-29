@@ -41,7 +41,7 @@ async function serverError(res: Response, fallback: string) {
   return typeof data?.error === "string" ? data.error : fallback;
 }
 
-// true = round 0 exists, false = it does not, null = could not find out.
+// true = round 0 exists, false = it does not, string = do not write, show this.
 //
 // The R62 lesson applied to the second request: a rejected fetch does not
 // prove nothing was created. If the round DID land, blindly re-POSTing is not
@@ -50,15 +50,24 @@ async function serverError(res: Response, fallback: string) {
 // challenge's followup prompt, sweeping the user past the round-1 results they
 // paid tokens for. So a retry asks before it writes, and only writes on a
 // definite "no".
-async function roundLanded(attemptId: string): Promise<boolean | null> {
+//
+// R67: a non-2xx answer is not a network failure, and telling a user with an
+// expired session to "try again" is advice that can never succeed -- a dead
+// session returns the same 401 forever, and that is most likely exactly when
+// this path runs, after a long edit of a long prompt. The body goes through
+// the same extraction the sibling POSTs use, so "login required" reaches the
+// user here as well; the fallback stays the network message because a body
+// with no message at all is a proxy page, not the server talking.
+async function roundLanded(attemptId: string): Promise<boolean | string> {
+  let res: Response;
   try {
-    const res = await fetch(`/api/attempts/${attemptId}`);
-    if (!res.ok) return null;
-    const data = await res.json().catch(() => null);
-    return Array.isArray(data?.rounds) ? data.rounds.length > 0 : null;
+    res = await fetch(`/api/attempts/${attemptId}`);
   } catch {
-    return null;
+    return NETWORK;
   }
+  if (!res.ok) return await serverError(res, NETWORK);
+  const data = await res.json().catch(() => null);
+  return Array.isArray(data?.rounds) ? data.rounds.length > 0 : NETWORK;
 }
 
 export async function submitPrompt(
@@ -70,7 +79,7 @@ export async function submitPrompt(
     const landed = await roundLanded(attemptId);
     // Unknown: the attempt may already be running. Reporting the failure and
     // keeping the id is the only safe answer -- the next click asks again.
-    if (landed === null) return { attemptId, error: NETWORK };
+    if (typeof landed === "string") return { attemptId, error: landed };
     if (landed) return { attemptId, error: null };
   } else {
     let created: Response;

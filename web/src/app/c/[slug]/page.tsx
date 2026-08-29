@@ -7,7 +7,11 @@ import Editor from "./editor";
 export default async function ChallengePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const session = await getServerSession(authOptions);
-  if (!session) redirect("/login");
+  // Carry the destination: a challenge link is the natural thing to share, and
+  // following one logged out otherwise lands the visitor on the home page with
+  // no idea which challenge they were sent. safeCallbackUrl re-validates it on
+  // the way back out, so nothing trusts this round trip.
+  if (!session) redirect(`/login?callbackUrl=/c/${encodeURIComponent(slug)}`);
   // R12: getPublishedChallenge already IS this page's query -- Task 13 wrote
   // it for GET /api/challenges/[slug] and it fetches the same six fields plus
   // the isActive-filtered model roster. Reused rather than extended or

@@ -39,8 +39,15 @@ type AttemptOver = {
   completedAt?: Date | null;
   startedAt?: Date;
 };
+// Every attempt here gets round 0, because every real attempt has one: the
+// two POSTs that create an attempt and its first round are milliseconds apart
+// and R66 makes listUserAttempts skip anything that never got the second. A
+// fixture without a round models a FAILED start, not an attempt.
 const mkAttempt = (userId: string, challengeId: string, over: AttemptOver = {}) =>
-  prisma.attempt.create({ data: { userId, challengeId, ...over }, select: { id: true } });
+  prisma.attempt.create({
+    data: { userId, challengeId, ...over, rounds: { create: { index: 0, promptText: "p" } } },
+    select: { id: true },
+  });
 
 const day = (n: number) => new Date(Date.UTC(2026, 0, n));
 
@@ -130,6 +137,10 @@ afterAll(async () => {
     where: { slug: { startsWith: NS } }, select: { id: true },
   });
   const ids = challenges.map((c) => c.id);
+  const attempts = await prisma.attempt.findMany({
+    where: { challengeId: { in: ids } }, select: { id: true },
+  });
+  await prisma.round.deleteMany({ where: { attemptId: { in: attempts.map((a) => a.id) } } });
   await prisma.attempt.deleteMany({ where: { challengeId: { in: ids } } });
   await prisma.user.deleteMany({ where: { email: { startsWith: NS } } });
   await prisma.challenge.deleteMany({ where: { id: { in: ids } } });
@@ -255,6 +266,29 @@ describe("listUserAttempts", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows.map((r) => r.finalScore)).toEqual([90]);
+  });
+
+  // R66, tested the way the defect was demonstrated rather than by asserting
+  // the predicate. POST /api/attempts creates a row unconditionally and costs
+  // nothing (no Run rows, so no tokens), and `take: 100` is ordered by
+  // startedAt DESC -- so orphans are always NEWER than real history and evict
+  // it. 150 of them here against Alice's four genuine attempts, the oldest of
+  // which (`draft`, day 0) is the first thing a hundred-row window loses.
+  it("cannot be evicted from the window by a flood of failed starts", async () => {
+    await prisma.attempt.createMany({
+      data: Array.from({ length: 150 }, () => ({
+        userId: alice.id, challengeId: main.id, status: "active",
+        startedAt: new Date(),   // newest, i.e. at the front of the ordering
+      })),
+    });
+
+    const rows = await listUserAttempts(alice.id);
+
+    // Not "150 fewer rows": every one of Alice's real attempts is still here,
+    // INCLUDING the oldest, and no orphan reached the payload.
+    expect(rows.map((r) => r.finalScore)).toEqual([99, 90, 70, 88]);
+    expect(rows.every((r) => r.status === "completed")).toBe(true);
+    expect(rows).toHaveLength(4);
   });
 
   // userId is what scopes the query; leaking it into the payload would put a
