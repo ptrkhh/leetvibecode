@@ -45,7 +45,7 @@ export default async function Leaderboard({ params }: { params: Promise<{ slug: 
           </caption>
           <thead>
             <tr>
-              <th scope="col" className="py-1">
+              <th scope="col" id="lb-rank" className="py-1">
                 Rank
               </th>
               <th scope="col">Player</th>
@@ -64,11 +64,24 @@ export default async function Leaderboard({ params }: { params: Promise<{ slug: 
                 is the case where the index IS the row's identity. */}
             {board.rows.map((r, i) => (
               <tr key={i} className="border-t">
-                <td className="py-1">{r.rank}</td>
-                {/* The player names the row, so it is the row header: cell-by-
-                    cell navigation then reads "Alice, Score, 90.00" instead of
-                    an unattributed number. */}
-                <th scope="row" className="font-normal">
+                {/* R71: `headers`, not the automatic algorithm. The player is
+                    the row header, but the WHATWG header/data-cell algorithm
+                    scans LEFT and UP only, so a th to the right of a cell is
+                    never found -- scope="row" reaches Score and Tokens and
+                    misses Rank, the one number this page exists to state. An
+                    explicit `headers` fixes it without moving the column.
+                    BOTH ids are required: `headers` REPLACES the automatic
+                    assignment rather than adding to it, so listing only the
+                    player would trade the missing row header for a missing
+                    column header ("T20 Grace, 1" instead of "Rank, 1").
+                    Row header first, matching the order the automatic scan
+                    produces for the cells that do not need this. */}
+                <td headers={`lb-p${i} lb-rank`} className="py-1">
+                  {r.rank}
+                </td>
+                {/* Score and Tokens follow this cell, so the scan finds it and
+                    they need nothing: "T20 Grace, Score, 87.50". */}
+                <th scope="row" id={`lb-p${i}`} className="font-normal">
                   {r.name}
                 </th>
                 {/* Task 16 carried display precision here on purpose: the API

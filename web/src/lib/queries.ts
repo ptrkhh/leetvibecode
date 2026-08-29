@@ -103,7 +103,7 @@ export async function getLeaderboard(
   // FIRST in Postgres, so a completed attempt with no score would sit at
   // rank 1 with a blank score.
   //
-  // RANK() (spec L79) rather than the array index, so tied players show the
+  // RANK() (spec L81) rather than the array index, so tied players show the
   // same rank instead of being told one of them is fourth and the other third
   // with identical scores. Cast to int because rank() returns bigint, which
   // Prisma hands back as a JS BigInt and NextResponse.json refuses to
