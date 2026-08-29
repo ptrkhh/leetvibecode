@@ -123,3 +123,21 @@ over time.
 - `next-auth@4` installs clean against Next 15 / React 19 with no
   `--legacy-peer-deps` needed (its latest 4.x patch declares peer support for
   both).
+- `npx vitest run` (`web`'s `npm test`) needs Postgres up and `DATABASE_URL`
+  set — the leaderboard tests (Task 16) are the first that hit the real
+  database instead of mocking `./db`, and there is no skip-if-no-DB guard
+  (a silent skip is how a suite quietly stops testing anything). `./gate.sh`
+  and the Quickstart above both already start Postgres first; a bare
+  `npm test` in `web/` does not.
+- The dev database accumulates `Attempt` rows across repeated `./gate.sh` /
+  test runs (harmless — they carry no score and R66 already filters
+  zero-round attempts out of history and the leaderboard) but never shrinks
+  on its own. Reset it with `docker compose down -v && docker compose up -d
+  postgres` (drops the volume) if it grows large enough to matter, followed
+  by `npx prisma migrate deploy` and `npx prisma db seed` in `web/`.
+
+## Production deployment
+
+`docs/deploy.md` — the single-VPS Docker deployment (`docker-compose.prod.yml`,
+`web/Dockerfile`, `judge/Dockerfile`, `caddy/Dockerfile` + `Caddyfile`). This
+README and `./gate.sh` cover local development only.

@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: leetvibecode
+    volumes: [pgdata:/var/lib/postgresql/data]
+    # Web and judge both connect immediately on startup (judge: a DB pool
+    # opened eagerly in db.py; the runbook's step 5 runs `prisma migrate
+    # deploy` right after `up -d`), and `postgres:16`'s own entrypoint is not
+    # instantly ready to accept connections. Without this, both depends_on
+    # below only wait for the container to START, not for Postgres to be
+    # ready, and migrate deploy can race a server that refuses connections.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d leetvibecode"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  web:
+    build: ./web
+    env_file: .env
+    environment:
+      # Fixed by the volume mount below, not the operator's dev-oriented
+      # CHALLENGES_DIR in .env (../challenges, meaningless in a container).
+      # The web container needs this too, not just judge: `npx prisma db
+      # seed` (runbook step 6) runs runSeed.ts's readdirSync inside THIS
+      # container.
+      CHALLENGES_DIR: /challenges
+    volumes:
+      - ./challenges:/challenges:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+  judge:
+    build: ./judge
+    env_file: .env
+    environment:
+      SANDBOX_DIR: /sandbox-tmp
+      CHALLENGES_DIR: /challenges
+      # SANDBOX_HOST_DIR is deliberately NOT set here -- it must be the real
+      # HOST path (as seen by the Docker daemon, not by this container) that
+      # ./sandbox-tmp below resolves to, which depends on where the repo was
+      # cloned. Set it for real in .env (see docs/deploy.md step 2); it
+      # flows in via env_file above like every other operator-supplied
+      # value. Getting it wrong fails loud, not silent: runner.py's
+      # _verify_mount() canary checks it once at startup and every sandboxed
+      # run then reports platform_error rather than mis-scoring a player.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./challenges:/challenges:ro
+      - ./sandbox-tmp:/sandbox-tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+  # Not started by `up` (profiles below) -- a one-off runner for `prisma
+  # migrate deploy`/`prisma db seed` (docs/deploy.md steps 5-6), built from
+  # `web`'s own `build` STAGE rather than the `web` service's final image.
+  # The final image deliberately ships Next's standalone output, which
+  # traces only what server.js imports at runtime and correctly excludes
+  # the prisma/tsx CLIs -- discovered by trying to `exec` them there: it
+  # needs both CLIs' own real dependency trees (prisma -> @prisma/config ->
+  # effect; tsx -> esbuild) that `npm ci` in the build stage already has
+  # correct and complete, and that hand-copying into the final image kept
+  # missing pieces of two levels deep. Same image family, no separate
+  # Dockerfile, and the ~1GB of devDependencies this drags in never reaches
+  # the container that's actually reachable from the internet.
+  web-migrate:
+    build:
+      context: ./web
+      target: build
+    env_file: .env
+    environment:
+      CHALLENGES_DIR: /challenges
+    volumes:
+      - ./challenges:/challenges:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["tools"]
+  caddy:
+    build: ./caddy
+    # {$SITE_ADDRESS} in the Caddyfile is interpolated by the Caddy PROCESS
+    # from its own environment at startup, not by `docker compose` -- this
+    # is a normal container env var, and without it the placeholder expands
+    # empty, the site block vanishes, and Caddy serves nothing (R14).
+    env_file: .env
+    ports: ["80:80", "443:443"]
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro, caddy_data:/data]
+    depends_on: [web]
+    restart: unless-stopped
+volumes:
+  pgdata:
+  caddy_data:
