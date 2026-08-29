@@ -1,0 +1,49 @@
+slug: job-dag
+title: Job DAG Runner
+difficulty: hard
+brief: |
+  Build a runner for a graph of jobs. Each job is a zero-argument callable that
+  may not start until every job it depends on has finished. The runner works
+  out a legal order, runs each job exactly once, and reports the order it used.
+
+  The priority here is correctness under failure. Two things must never happen:
+  a job running before one of its dependencies, and a job running at all when
+  the graph is not runnable. So the graph is validated before anything is
+  executed -- an impossible graph must leave the world untouched, not
+  half-processed -- and a job that blows up must not be silently swallowed.
+interface: |
+  def run_dag(jobs: dict[str, callable], deps: dict[str, list[str]]) -> list[str]:
+      """Run every job in `jobs` exactly once, each after all of its
+      dependencies, and return the job names in the order they were run.
+
+      `deps[name]` lists the names that must run before `name`; a job missing
+      from `deps` has no dependencies. Every name mentioned is a key of `jobs`,
+      and a job's dependency list has no duplicates.
+
+      The order is fully determined: at each step run the alphabetically first
+      job whose dependencies have all completed. So with jobs a, b, x where b
+      depends on a and x depends on nothing, the order is a, b, x -- b beats x
+      as soon as a is done, rather than waiting for a whole 'level' to finish.
+
+      If the graph contains a cycle, raise ValueError WITHOUT running any job.
+      Cycle detection happens up front, before the first call.
+
+      A job that raises is a hard stop, not a recoverable condition: the
+      exception propagates out of run_dag, jobs already run have run, nothing
+      further is started, and no order is returned."""
+parTokens: 16000
+models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
+followup:
+  prompt: |
+    Add failure propagation as a NEW function, leaving `run_dag` exactly as it
+    is -- same signature, same return value, same propagation of a job's
+    exception:
+
+        run_dag_report(jobs, deps) -> dict[str, str]
+
+    It runs the same jobs in the same order, but a job that raises does not
+    stop the run: it is recorded as "failed", every job that depends on it --
+    directly or transitively -- is recorded as "skipped" and never called, and
+    every other job still runs and is recorded as "ok". The returned dict has
+    one entry per job, and a cycle still raises ValueError without running
+    anything.

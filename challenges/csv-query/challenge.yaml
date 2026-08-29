@@ -1,0 +1,51 @@
+slug: csv-query
+title: CSV Row Query
+difficulty: easy
+brief: |
+  Build a tiny query helper over rows already parsed out of a CSV: a list of
+  dicts, one per row, keyed by column name. `query` filters those rows by an
+  exact-match predicate and projects the columns you ask for.
+
+  This is a throwaway analysis prototype, not a database: simplicity comes
+  first. Prefer the shortest readable implementation over indexes, query
+  planners, caching or a class hierarchy -- it will be read once and thrown
+  away.
+interface: |
+  def query(rows, where=None, select=None):
+      """Filter and project a list of row dicts.
+
+      rows:   list of dicts, one per row.
+      where:  dict of column -> required value (values are never None). A row
+              matches only if it has EVERY listed column with exactly that
+              value; a row missing one of those columns does not match.
+              `where` itself being None or {} matches every row.
+      select: list of column names to keep in each output row. None keeps
+              every column. A listed column a row does not have is simply
+              absent from that output row.
+
+      Returns the matching rows, in input order. Must not modify `rows` or
+      the dicts inside it.
+      """
+parTokens: 7000
+models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
+followup:
+  prompt: |
+    Extend `query` with grouping and aggregation:
+    `query(rows, where=None, select=None, group_by=None, agg=None)`.
+
+    `group_by` is a list of column names. When it is given, the rows that
+    survive `where` are grouped by their values in those columns, and the
+    result is one row per group instead of one row per input row. Each output
+    row carries the group's own values under the `group_by` column names,
+    plus one entry per aggregate. Groups come out in the order they are first
+    encountered in the input.
+
+    `agg` maps an output column name to a `(func, column)` pair, where `func`
+    is `"count"`, `"sum"` or `"avg"`. `"count"` is the number of rows in the
+    group and takes `None` as its column; `"sum"` and `"avg"` add up that
+    column's values across the group, with `"avg"` dividing by the group's
+    row count (a true average -- 17 over 3 rows is 5.666..., not 5).
+
+    `select`, if given alongside `group_by`, projects the grouped output rows.
+    With `group_by=None` (the default) nothing changes: filtering, projection,
+    input ordering and leaving `rows` unmodified all behave exactly as before.

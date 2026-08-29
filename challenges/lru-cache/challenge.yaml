@@ -1,0 +1,40 @@
+slug: lru-cache
+title: LRU Cache
+difficulty: easy
+brief: |
+  Build a fixed-capacity LRU (least-recently-used) cache. It holds at most
+  `capacity` entries; when a `put` would push it over that, the least
+  recently used entry is evicted. Both a successful `get` and a `put` count
+  as a use of that key.
+
+  This sits in front of a hot read path and is latency-critical: `get` and
+  `put` must each be O(1), with no scan of the cache on any call.
+interface: |
+  class LRUCache:
+      def __init__(self, capacity: int):
+          """capacity: the maximum number of entries held at once."""
+      def get(self, key):
+          """Return the value stored under `key`, or None if it is not
+          cached. A hit counts as a use: the key becomes the most recently
+          used entry."""
+      def put(self, key, value) -> None:
+          """Store `value` under `key` and make it the most recently used
+          entry, overwriting any existing value for that key. If this would
+          exceed `capacity`, evict the least recently used entry first."""
+parTokens: 6000
+models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
+followup:
+  prompt: |
+    Extend the cache with per-entry expiry: `put(key, value, ttl_s=None)`.
+    An entry stored with a `ttl_s` expires once that many seconds have
+    elapsed since it was stored -- from the expiry instant onward a `get`
+    misses and returns None, as if the key had never been cached.
+    `ttl_s=None` (the default) means the entry never expires.
+
+    Time must come from an injectable clock so expiry is testable without
+    sleeping: `LRUCache(capacity, clock=None)` takes an optional zero-argument
+    callable returning seconds, defaulting to `time.monotonic`. Every reading
+    of the current time MUST go through it. Existing one-argument
+    construction (`LRUCache(100)`) and everything the cache already does --
+    LRU eviction, overwrite-as-use, the capacity bound -- must keep working
+    unchanged.

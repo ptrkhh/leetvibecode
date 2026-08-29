@@ -1,0 +1,43 @@
+slug: pubsub
+title: In-Memory PubSub
+difficulty: medium
+brief: |
+  Build a small in-memory publish/subscribe bus. Subscribers register a
+  callback against a topic, publishers send a message to a topic, and every
+  current subscriber of that topic receives it. Topics are plain strings and
+  spring into existence on first use -- there is no declare or register step,
+  and publishing into the void is not an error.
+
+  This is the messaging seam of a system that will keep growing: expect new
+  routing rules, new kinds of subscription and new delivery policies to be
+  bolted on later. Extensibility comes first -- favour a shape that stays
+  easy to add to over one that is clever or tightly packed today.
+interface: |
+  class PubSub:
+      def __init__(self):
+          """An empty bus. Topics are created lazily on first use."""
+      def subscribe(self, topic: str, cb):
+          """Register the one-argument callable `cb` on `topic`. Returns a
+          subscription handle with an `unsubscribe()` method; calling that
+          more than once is harmless. The same callable may subscribe more
+          than once, and each subscription is delivered to separately."""
+      def publish(self, topic: str, msg) -> int:
+          """Deliver `msg` to every current subscriber of `topic`, in the
+          order they subscribed, and return how many callbacks were called.
+          Publishing to a topic with no subscribers is not an error."""
+parTokens: 10000
+models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
+followup:
+  prompt: |
+    Extend the bus with wildcard subscriptions: a topic ending in `.*`, such
+    as `subscribe("orders.*", cb)`, matches every topic made of that prefix
+    plus exactly ONE more dot-separated segment. So `orders.*` receives
+    `orders.created` and `orders.paid`, but not `orders` (no extra segment)
+    and not `orders.eu.created` (two extra segments).
+
+    A published message reaches ALL of its matching subscribers -- exact and
+    wildcard alike -- in the order they subscribed, as one single ordering
+    rather than exact-first-then-wildcard, and `publish` returns the total
+    number of callbacks it called. Wildcard subscriptions unsubscribe through
+    the same handle as any other. Plain exact-topic subscribe/publish/
+    unsubscribe behaviour must be completely unchanged.
