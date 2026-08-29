@@ -131,6 +131,26 @@ def test_missing_challenge_yaml_refused(tmp_path, capsys):
     assert not (ch / "challenge.lock.json").exists()
 
 
+def test_slug_not_matching_directory_refused(tmp_path, capsys):
+    # R73: the seed upserts on the yaml's slug, not the directory, so a copied
+    # directory with an unedited slug silently overwrites the challenge it was
+    # copied from. Both directories are individually valid; only this catches it.
+    ch = write_challenge(tmp_path, GOOD_ADD)
+    (ch / "challenge.yaml").write_text("slug: rate-limiter\n")
+    assert check(ch) == 1
+    out = capsys.readouterr().out
+    assert "REFUSED" in out and "rate-limiter" in out and "adder" in out
+    assert not (ch / "challenge.lock.json").exists()
+
+
+def test_unparseable_challenge_yaml_refused(tmp_path, capsys):
+    ch = write_challenge(tmp_path, GOOD_ADD)
+    (ch / "challenge.yaml").write_text("slug: [unclosed\n")
+    assert check(ch) == 1
+    assert "REFUSED" in capsys.readouterr().out  # not a raw YAMLError traceback
+    assert not (ch / "challenge.lock.json").exists()
+
+
 def test_missing_reference_solution_refused(tmp_path, capsys):
     ch = write_challenge(tmp_path, GOOD_ADD)
     (ch / "reference" / "solution.py").unlink()

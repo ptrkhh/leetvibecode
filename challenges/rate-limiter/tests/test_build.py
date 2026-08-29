@@ -28,6 +28,21 @@ def test_refills_over_time():
     assert rl.allow() and rl.allow() and not rl.allow()
 
 
+def test_continuous_fractional_refill_not_quantized():
+    # Every other clock jump in this file is a whole number, which a limiter
+    # that floors its refill (int tokens, or whole-second ticks) survives
+    # unnoticed. Small fractional steps are what expose it: 0.4s at 2/s is
+    # 0.8 of a token, and flooring that to 0 stalls the bucket forever.
+    rl, clock = make(rate=2.0, capacity=1.0)
+    assert rl.allow()  # drain the initial full bucket first
+    allowed = 0
+    for _ in range(10):
+        clock.t += 0.4
+        if rl.allow():
+            allowed += 1
+    assert allowed == 5
+
+
 def test_refill_caps_at_capacity():
     rl, clock = make(rate=100.0, capacity=3.0)
     # Spend one FIRST: the bucket has to already exist when the clock jumps,

@@ -11,7 +11,8 @@ lock file this script writes).
 Usage: python publish_check.py <challenge-dir>
 Exit 0 on success (challenge.lock.json written). Exit 1 when the challenge
 itself is bad (REFUSED: a suite fails, the benchmark times out or defines no
-SIZES, or the directory is malformed/unreadable). Exit 2 when the checker
+SIZES, the yaml's slug does not match its directory name, or the directory
+is malformed/unreadable). Exit 2 when the checker
 itself couldn't run (PLATFORM ERROR: a platform_error from the test or bench
 phase, e.g. Docker unavailable) -- never the challenge's fault. R43: a CI
 pipeline can then retry on 2 and fail the build on 1, so the distinction is
@@ -22,6 +23,8 @@ disguised as a retry-me infra blip.
 import json
 import pathlib
 import sys
+
+import yaml
 
 from benching import run_bench
 from testing import run_tests
@@ -39,6 +42,45 @@ def _need(path: pathlib.Path) -> str | None:
         return None
 
 
+def _check_slug(challenge_dir: pathlib.Path) -> bool:
+    """R73: challenge.yaml must exist, parse, and carry a slug equal to its own
+    directory name.
+
+    The seed publishes on the yaml's OWN slug (runSeed.ts upserts
+    `where: {slug: row.slug}`) and never on the directory name, so two
+    directories carrying the same slug both pass this gate with their own valid
+    locks, and then the alphabetically-later one silently overwrites the
+    earlier one's title, brief, interface, parTokens and referenceMs under a
+    single row -- exit 0, no warning, "published <slug>" printed twice. That is
+    exactly what copying a challenge directory and editing everything except
+    the `slug:` line does, which is how every challenge after the first gets
+    authored, and it can replace a challenge players have already attempted.
+    Nothing downstream can catch it (both locks are valid and both seeds
+    "succeed"), so it has to be refused here. .resolve() so `.` and a trailing
+    slash still name the real directory.
+    """
+    path = challenge_dir / "challenge.yaml"
+    if not path.is_file():
+        print(f"REFUSED: missing {path}")
+        return False
+    text = _need(path)
+    if text is None:
+        return False
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        print(f"REFUSED: cannot parse {path} ({e})")
+        return False
+    slug = data.get("slug") if isinstance(data, dict) else None
+    expected = challenge_dir.resolve().name
+    if slug != expected:
+        print(f"REFUSED: {path} has slug {slug!r} but its directory is "
+              f"{expected!r} -- the seed publishes under the slug, so a copied "
+              f"directory with an unedited slug overwrites the original challenge")
+        return False
+    return True
+
+
 def check(challenge_dir: pathlib.Path) -> int:
     # R44: invalidate any prior lock FIRST, unconditionally, before any check
     # below can fail -- every failure path returns without otherwise touching
@@ -53,10 +95,7 @@ def check(challenge_dir: pathlib.Path) -> int:
     # Every missing/unreadable piece is checked (not short-circuited) so a
     # malformed directory gets ALL its problems reported in one run, same
     # reasoning as running both hidden suites together below.
-    yaml_path = challenge_dir / "challenge.yaml"
-    yaml_ok = yaml_path.is_file()
-    if not yaml_ok:
-        print(f"REFUSED: missing {yaml_path}")
+    yaml_ok = _check_slug(challenge_dir)
 
     code = _need(challenge_dir / "reference" / "solution.py")
     build = _need(challenge_dir / "tests" / "test_build.py")
