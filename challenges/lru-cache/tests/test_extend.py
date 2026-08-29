@@ -66,3 +66,28 @@ def test_the_clock_argument_is_optional():
     c.put("b", 2, ttl_s=3600.0)
     assert c.get("a") == 1
     assert c.get("b") == 2
+
+
+def test_a_sub_second_ttl_expires_on_time():
+    # R76: every other ttl_s in this file is a whole number, and for an
+    # integer ttl `floor(elapsed) >= ttl` is identical to `elapsed >= ttl` --
+    # so an implementation that truncates elapsed time to whole seconds
+    # ("avoiding float precision issues") is invisible to them. A fractional
+    # ttl checked either side of its own fractional boundary is what exposes
+    # it: quantized, a 0.5s entry survives until the next whole second, and a
+    # 0.01s entry outlives its ttl a hundredfold.
+    clock = FakeClock()
+    c = LRUCache(4, clock)
+    c.put("half", 1, ttl_s=0.5)     # expires at 0.5
+    clock.t = 0.4
+    assert c.get("half") == 1
+    clock.t = 0.6
+    assert c.get("half") is None
+    # Same again with a fractional put time, so neither end of the
+    # subtraction is a whole number.
+    clock.t = 1.25
+    c.put("quarter", 2, ttl_s=0.25)  # expires at 1.5
+    clock.t = 1.4
+    assert c.get("quarter") == 2
+    clock.t = 1.6
+    assert c.get("quarter") is None

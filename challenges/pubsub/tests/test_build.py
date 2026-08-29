@@ -89,3 +89,25 @@ def test_the_message_object_is_handed_over_unchanged():
     payload = {"id": 1}
     bus.publish("t", payload)
     assert log[0] is payload
+
+
+def test_subscription_changes_made_during_delivery_apply_to_the_next_publish():
+    # Delivery works off a snapshot of the subscriber list. Walking the live
+    # list instead is a real Python failure, not a hypothetical: removing the
+    # not-yet-called subscriber from under the loop silently skips it.
+    bus = PubSub()
+    seen, cb = recorder()
+    late = []
+
+    def meddler(msg):
+        seen.append("meddler")
+        second.unsubscribe()               # a subscriber that has not run yet
+        bus.subscribe("t", late.append)    # and a brand new one
+
+    bus.subscribe("t", meddler)
+    second = bus.subscribe("t", cb)
+    assert bus.publish("t", 1) == 2        # both, despite the mid-flight edits
+    assert seen == ["meddler", 1]
+    assert late == []                      # the new subscription starts next time
+    assert bus.publish("t", 2) == 2        # meddler plus the late subscriber
+    assert late == [2]

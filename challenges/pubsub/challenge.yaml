@@ -24,7 +24,10 @@ interface: |
       def publish(self, topic: str, msg) -> int:
           """Deliver `msg` to every current subscriber of `topic`, in the
           order they subscribed, and return how many callbacks were called.
-          Publishing to a topic with no subscribers is not an error."""
+          Publishing to a topic with no subscribers is not an error. The set
+          of subscribers is fixed when the call starts: a callback that
+          subscribes or unsubscribes during delivery changes what later
+          publishes do, never this one."""
 parTokens: 10000
 models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
 followup:
