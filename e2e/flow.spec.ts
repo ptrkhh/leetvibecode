@@ -73,6 +73,54 @@ const FOLLOWUP_SENTINEL = "per-key buckets";
 const FOLLOWUP_KEY = "followupPrompt";
 const REFERENCE_KEY = "referenceMs";
 
+// R78: what round 1 actually sends. Named so it can be compared against
+// what Postgres actually stored, not just typed into the textarea.
+const PROMPT_TEXT =
+  "Implement the RateLimiter interface exactly as specified. Python only, no extra dependencies.";
+
+// R78: a floor for the completed attempt's finalScore, MEASURED from real
+// runs on this host, not guessed. 5 consecutive runs (task-23-report.md has
+// the raw numbers) each scored EXACTLY 100, zero variance: mock mode submits
+// the same reference solution for every model in both rounds, on the same
+// sandbox image and host that recorded referenceMs, so accuracy clamps to
+// 1.0 and perf clamps to min(1, ref/sub) >= 1.0 essentially always. The
+// reviewer's inverted-judge regression (parse_junit's pass flag flipped)
+// scored exactly 0 on identical input. 80 sits with 20 points of real margin
+// below every observed healthy score and nowhere near 0, so it cannot be
+// crossed by ordinary host jitter (perf timing noise -- Task 21/22's own
+// measurements put that at single-digit percent) but is crossed immediately
+// by a broken judge or a broken scoring formula.
+const FINAL_SCORE_FLOOR = 80;
+
+function requireDbUrl(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    // R2's convention, extended to this task by name ("every judge
+    // invocation is prefixed set -a && . ../.env && set +a ... used by
+    // T10/T23/T24"): fail loudly rather than silently misbehave. A
+    // contributor who forgot to source the env gets a clear error, not a
+    // gate that quietly stops checking what it claims to check.
+    throw new Error(
+      "DATABASE_URL is not set -- run the gate with the root .env sourced " +
+        "(set -a && . ../.env && set +a).",
+    );
+  }
+  return url;
+}
+
+// Single-scalar query, used both for R78's structural assertions (what did
+// Postgres actually persist, as opposed to what the page happened to
+// render) and for cleanup. `-t -A` (tuples-only, unaligned) gives exactly
+// the value plus one trailing newline, stripped below -- not `.trim()`,
+// which would also eat meaningful leading/trailing whitespace that is
+// legitimately part of a multi-line prompt (the followup prompt is a
+// several-line YAML block scalar).
+function psqlOne(sql: string): string {
+  return execFileSync("psql", [requireDbUrl(), "-t", "-A", "-c", sql], {
+    encoding: "utf8",
+  }).replace(/\n$/, "");
+}
+
 // Deletes exactly what this run created (Job/TestResult/BenchmarkResult ->
 // Run -> Round -> Attempt -> User, in FK order -- Round_attemptId_fkey etc.
 // are ON DELETE RESTRICT per Task 18's ledger measurement, so children must
@@ -84,18 +132,7 @@ const REFERENCE_KEY = "referenceMs";
 // by leaving no state rather than by hoping fewer than 50 gate runs happen
 // before someone notices.
 function cleanup() {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    // R2's convention, extended to this task by name ("every judge
-    // invocation is prefixed set -a && . ../.env && set +a ... used by
-    // T10/T23/T24"): fail loudly rather than silently leave state behind.
-    // A contributor who forgot to source the env gets a clear error, not a
-    // gate that quietly stops cleaning up after itself.
-    throw new Error(
-      "DATABASE_URL is not set -- run the gate with the root .env sourced " +
-        "(set -a && . ../.env && set +a) so cleanup can run.",
-    );
-  }
+  const url = requireDbUrl();
   const sql = `
     DELETE FROM "Job" WHERE "runId" IN (
       SELECT r.id FROM "Run" r JOIN "Round" rnd ON rnd.id = r."roundId"
@@ -155,9 +192,7 @@ test("full attempt lifecycle on mock judge", async ({ page }) => {
   expect(await page.content()).not.toContain(FOLLOWUP_SENTINEL);
 
   // ---- round 1: submit prompt --------------------------------------------
-  await page
-    .getByRole("textbox", { name: "Prompt" })
-    .fill("Implement the RateLimiter interface exactly as specified. Python only, no extra dependencies.");
+  await page.getByRole("textbox", { name: "Prompt" }).fill(PROMPT_TEXT);
   await page.getByRole("button", { name: "Send to all models" }).click();
   await page.waitForURL(/\/a\//);
   const attemptId = page.url().split("/a/")[1];
@@ -168,6 +203,14 @@ test("full attempt lifecycle on mock judge", async ({ page }) => {
   const t1 = Date.now();
   await expect(round2Button).toBeVisible({ timeout: ROUND_TIMEOUT });
   console.log(`[timing] round 1 (test+bench x4, TEST_THREADS=2) took ${Date.now() - t1}ms`);
+
+  // ---- R78: round 0's stored prompt is genuinely what the player typed,
+  // not silently swapped -- checked against Postgres (the same authority
+  // the judge itself reads from to build model conversations), not just
+  // against what the page happens to render.
+  expect(
+    psqlOne(`SELECT "promptText" FROM "Round" WHERE "attemptId"='${attemptId}' AND index=0`),
+  ).toBe(PROMPT_TEXT);
 
   // ---- R11 mid-attempt: referenceMs is now expected present (R52 -- the
   // player already committed to this attempt, and the dashboard cannot
@@ -190,6 +233,28 @@ test("full attempt lifecycle on mock judge", async ({ page }) => {
   });
   console.log(`[timing] round 2 (test+bench x4) took ${Date.now() - t2}ms`);
   console.log(`[timing] full lifecycle end-to-end: ${Date.now() - t0}ms`);
+
+  // ---- R78: round 1 (index 1)'s stored prompt is genuinely the
+  // challenge's followup, not sourced from the round-2 POST's request body
+  // (which the dashboard sends with no body at all -- a regression pulling
+  // promptText from there instead of attempt.challenge.followupPrompt
+  // silently persists an empty string, invisible to every page-level
+  // assertion above). Compared as two Postgres reads against each other --
+  // not a hardcoded copy of the yaml's multi-line text, which the route
+  // never touches directly either.
+  const round1Prompt = psqlOne(
+    `SELECT "promptText" FROM "Round" WHERE "attemptId"='${attemptId}' AND index=1`,
+  );
+  const followupPrompt = psqlOne(`SELECT "followupPrompt" FROM "Challenge" WHERE slug='${SLUG}'`);
+  expect(round1Prompt.length).toBeGreaterThan(0);
+  expect(round1Prompt).toBe(followupPrompt);
+
+  // ---- R78: a known-correct submission must score near the ceiling, not
+  // merely "some number rendered somewhere". See FINAL_SCORE_FLOOR's
+  // definition for the measurement this threshold is set from.
+  const finalScore = Number(psqlOne(`SELECT "finalScore" FROM "Attempt" WHERE id='${attemptId}'`));
+  console.log(`[measured] finalScore = ${finalScore}`);
+  expect(finalScore).toBeGreaterThan(FINAL_SCORE_FLOOR);
 
   // Still never leaked, now that the attempt (and the followup prompt it
   // used) is fully complete.
