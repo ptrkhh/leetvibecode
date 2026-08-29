@@ -20,15 +20,6 @@ services:
   web:
     build: ./web
     env_file: .env
-    environment:
-      # Fixed by the volume mount below, not the operator's dev-oriented
-      # CHALLENGES_DIR in .env (../challenges, meaningless in a container).
-      # The web container needs this too, not just judge: `npx prisma db
-      # seed` (runbook step 6) runs runSeed.ts's readdirSync inside THIS
-      # container.
-      CHALLENGES_DIR: /challenges
-    volumes:
-      - ./challenges:/challenges:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,6 +58,13 @@ services:
   # missing pieces of two levels deep. Same image family, no separate
   # Dockerfile, and the ~1GB of devDependencies this drags in never reaches
   # the container that's actually reachable from the internet.
+  #
+  # CHALLENGES_DIR + the challenges mount live HERE, not on `web` (R14 named
+  # "the web service", but that predates this service existing): seed.ts's
+  # readdirSync runs wherever `prisma db seed` actually executes, which is
+  # this container, not the standalone `web` service -- `web`'s own runtime
+  # never reads CHALLENGES_DIR (grep confirms the one call site is
+  # web/prisma/seed.ts), so it dropped the now-dead env var and mount.
   web-migrate:
     build:
       context: ./web
@@ -82,10 +80,15 @@ services:
     profiles: ["tools"]
   caddy:
     build: ./caddy
-    # {$SITE_ADDRESS} in the Caddyfile is interpolated by the Caddy PROCESS
-    # from its own environment at startup, not by `docker compose` -- this
-    # is a normal container env var, and without it the placeholder expands
-    # empty, the site block vanishes, and Caddy serves nothing (R14).
+    # {$SITE_ADDRESS} is interpolated by the Caddy PROCESS from its own
+    # environment at startup, not by `docker compose` -- this is a normal
+    # container env var. Without it the placeholder expands to an empty
+    # line, which is NOT "no site" -- Caddyfile parsing then reads the next
+    # non-blank line (`rate_limit {`) as if IT were the site address, and
+    # Caddy refuses to start: "parsed 'rate_limit' as a site address, but it
+    # is a known directive" (exit 1), an error that never mentions
+    # SITE_ADDRESS. Reproduced, not assumed. Omitting env_file here is a
+    # crash with a misleading message, not a silently-empty site (R14).
     env_file: .env
     ports: ["80:80", "443:443"]
     volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro, caddy_data:/data]

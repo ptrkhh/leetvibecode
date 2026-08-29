@@ -8,9 +8,23 @@ Docker deployment. Same repo, same `.env` shape, different compose file
 proxy).
 
 Deployment target: a single VPS with Docker. The judge needs the host
-Docker socket to launch per-run sandbox containers (see Security posture
-below) — Railway/Fly.io don't hand one out, so the spec's single-host
-options collapse to a plain VPS.
+Docker socket to launch per-run sandbox containers — Railway/Fly.io don't
+hand one out, so the spec's single-host options collapse to a plain VPS.
+
+## Security posture — read before step 4
+
+Step 4 below is the moment `docker-compose.prod.yml` mounts
+`/var/run/docker.sock` into the judge container — **root-equivalent access
+to this machine**: anything that can reach that socket can run arbitrary
+containers with arbitrary mounts. Sandbox containment for a player's own
+submitted code relies entirely on the flags already in `judge/runner.py`:
+network disabled, read-only root filesystem outside `/work`, CPU/memory/pids
+caps, a non-root user inside the sandbox container — none of that limits
+what the judge *process itself* could do with the socket if it were ever
+compromised. Acceptable for a single-host MVP where the judge process is
+trusted code this project controls; revisit (e.g. a rootless Docker daemon,
+or moving sandbox execution behind a narrower API than the raw socket)
+before any multi-tenant or untrusted-operator deployment.
 
 1. Ubuntu 24.04 VPS, 4 vCPU / 8 GB. `apt install docker.io
    docker-compose-v2`.
@@ -54,9 +68,10 @@ options collapse to a plain VPS.
 
 3. `docker build -t lvc-sandbox judge/sandbox/` — the per-run sandbox
    image. `judge/runner.py` hard-depends on it for every test/bench phase;
-   nothing else in this runbook builds it, and `/healthz` never touches
-   Docker, so a skipped step here passes every health check and only fails
-   on the first real judge job.
+   nothing else in this runbook builds it. Skipping this step produces no
+   error anywhere — `judge` has no compose healthcheck wired to it, and
+   `/healthz` itself never touches Docker — so nothing catches the
+   omission until the first real judge job, which then fails.
 
 4. Create the sandbox scratch directory, then bring the stack up:
 
@@ -170,6 +185,17 @@ only the compiled binary), and it closes a measured, not hypothetical,
 degradation path. If a future path needs the same protection, add another
 `zone` block to the Caddyfile rather than a second plugin.
 
+`key {remote_host}` keys on the bare TCP peer address, which isolates
+correctly between genuinely different sources (confirmed: one IP blocked,
+a different one sailed straight through) but means any population sharing
+one apparent IP — carrier-grade NAT on mobile networks, a university or
+corporate network, a CDN placed in front of this deploy later — collapses
+onto a single 10/minute bucket together. Deliberately not re-keyed on
+session or user: that needs auth context inside Caddy, a much larger
+change, for an exposure this modest. If real users hit this, raise
+`events` first; only re-key by session/user if a higher ceiling isn't
+enough.
+
 ## Re-deploying against a database with existing users
 
 If you are redeploying this app against a database that already has
@@ -195,19 +221,20 @@ from their normalized form) — but a real environment that has been live
 for a while might have exactly this collision, and it fails the migration
 rather than silently merging two accounts.
 
-## Security posture
+Same category, different table: if you're pointing this deploy at a
+database copied from elsewhere rather than seeding fresh, check for a
+published challenge with no `referenceMs`:
 
-The judge container holds the host Docker socket
-(`/var/run/docker.sock`), which is root-equivalent access to this machine
-— anything that can reach it can run arbitrary containers with arbitrary
-mounts. Sandbox containment for a player's own submitted code relies
-entirely on the flags already in `judge/runner.py`: network disabled,
-read-only root filesystem outside `/work`, CPU/memory/pids caps, a
-non-root user inside the sandbox container. Acceptable for a single-host
-MVP where the judge process itself is trusted code this project controls;
-revisit (e.g. a rootless Docker daemon, or moving sandbox execution behind
-a narrower API than the raw socket) before any multi-tenant or
-untrusted-operator deployment.
+```sql
+SELECT slug FROM "Challenge" WHERE status = 'published' AND "referenceMs" IS NULL;
+```
+
+`loadChallenge.ts` refuses to publish a challenge without a numeric
+`referenceMs`, so this shouldn't happen from `prisma db seed` itself — it's
+a symptom of test/dev pollution or a manual row edit reaching this
+database. A hit isn't cosmetic: every attempt on that challenge 500s
+(perfScore divides by `referenceMs`) until it's re-seeded with a valid
+lock or unpublished.
 
 ## What this runbook has and hasn't been run through
 
@@ -244,3 +271,17 @@ needs the last of those to mean anything, and that step is unverified here.
 own location (the disk-provisioning case this doc recommends) was reasoned
 through, not exercised — the local run above set it to this repo's own
 `sandbox-tmp`, which is the same-path case.
+
+Re-run in full after the version-pinning pass above (R81-R84): all three
+pinned versions rebuilt and produced the identical `caddy version`
+(2.11.4) and image size (154MB) as the unpinned build they replace;
+`caddy validate`/`fmt` clean again; the rate limiter re-tested and this
+time also checked for `Retry-After` (present, counting down, on every
+`429`); the full register→both-rounds→leaderboard loop re-run to
+`finalScore: 100` against a cold stack built from every file in this
+commit, including `web` with `CHALLENGES_DIR`/the challenges mount removed
+(seed still ran clean through `web-migrate`, which is the only place that
+ever needed them); and the `SITE_ADDRESS`-omitted crash actually
+reproduced (`caddy validate`/`caddy run` both exit 1 with "parsed
+'rate_limit' as a site address, but it is a known directive") rather than
+taken on the strength of the wording change alone.

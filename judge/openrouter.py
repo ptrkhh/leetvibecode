@@ -1,8 +1,24 @@
+import logging
 import os
 import pathlib
 import time
 
 import httpx
+
+logger = logging.getLogger(__name__)
+# `.env.example` ships OPENROUTER_MOCK=1. Silent in production means every
+# model/round returns the challenge's own reference solution with nothing
+# in the logs to say so -- a platform that looks perfect and measures
+# nothing. One line at judge startup (this module is imported, transitively
+# via worker.py, the moment app.py's uvicorn process starts) so the
+# condition shows up in `docker compose logs` rather than depending on an
+# operator remembering a checklist item.
+if os.environ.get("OPENROUTER_MOCK") == "1":
+    logger.warning(
+        "OPENROUTER_MOCK=1 -- every generate() call returns the challenge's "
+        "reference solution instead of calling a real model. Fine for "
+        "dev/CI; set OPENROUTER_MOCK=0 for a real deployment."
+    )
 
 SYSTEM_PROMPT = (
     "You are a code generation engine. Reply with exactly one fenced ```python code block "
