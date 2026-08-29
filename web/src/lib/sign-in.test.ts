@@ -1,5 +1,5 @@
 import type { Mock } from "vitest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next-auth/react", () => ({ getProviders: vi.fn(), signIn: vi.fn() }));
 
@@ -71,25 +71,63 @@ describe("signInCredentials: the credentials leg", () => {
   });
 });
 
+const ORIGIN = "https://app.example";
+// The function reads window.location; the test decides what it says. Both
+// halves come from the same object in the browser, which is why neither is a
+// parameter.
+const at = (search: string) => {
+  vi.stubGlobal("window", { location: { search, origin: ORIGIN } });
+  return safeCallbackUrl();
+};
+const param = (value: string) => at(`?callbackUrl=${encodeURIComponent(value)}`);
+
+afterEach(() => vi.unstubAllGlobals());
+
 describe("safeCallbackUrl", () => {
   it("returns a same-origin path", () => {
-    expect(safeCallbackUrl("?callbackUrl=/c/rate-limiter")).toBe("/c/rate-limiter");
-    expect(safeCallbackUrl("?callbackUrl=/c/a%2Fb&other=1")).toBe("/c/a/b");
+    expect(at("?callbackUrl=/c/rate-limiter")).toBe("/c/rate-limiter");
+    expect(at("?callbackUrl=/c/a%2Fb&other=1")).toBe("/c/a/b");
+    expect(param("/c/x?tab=2#top")).toBe("/c/x?tab=2#top");
+  });
+
+  // R68: the parser normalizes, so an absolute URL on our OWN origin is a
+  // legitimate destination rather than something to block, and a traversal
+  // that cannot leave the origin comes back collapsed instead of refused.
+  it("accepts an absolute URL at this origin, reduced to its path", () => {
+    expect(param(`${ORIGIN}/c/x?a=1#f`)).toBe("/c/x?a=1#f");
+    expect(param("/c/../../evil")).toBe("/evil");
+    // No scheme and no leading slashes: a RELATIVE reference, which resolves
+    // against our own origin and cannot address another one. The shape check
+    // refused it; the parser normalizes it, which is the correct answer.
+    expect(param("evil.example")).toBe("/evil.example");
   });
 
   it("refuses anything that could leave the origin", () => {
-    // Protocol-relative, and the backslash form browsers normalize into it.
-    // Both start with a slash, which is why "starts with /" is not the test.
     for (const bad of [
-      "//evil.example", "/\\evil.example", "https://evil.example",
-      "http://evil.example", "javascript:alert(1)", "evil.example", "",
+      "//evil.example", "/\\evil.example", "\\\\evil.example",
+      "https://evil.example", "http://evil.example", "//attacker@evil.example",
+      "javascript:alert(1)", "data:text/html,<script>alert(1)</script>",
+      "",
     ])
-      expect(safeCallbackUrl(`?callbackUrl=${encodeURIComponent(bad)}`)).toBe("/");
+      expect(param(bad)).toBe("/");
+  });
+
+  // R68, the live bypass. The WHATWG URL parser strips ASCII TAB, CR and LF
+  // WHEREVER they occur, before any other parsing -- so each of these collapses
+  // into `//evil.example` while passing any check that reads the second
+  // character. Confirmed end to end against a production build: a real login
+  // followed by a top-level document navigation to the attacker's origin.
+  it("refuses the control characters the URL parser strips out", () => {
+    for (const c of ["\t", "\r", "\n", "\r\n"]) {
+      expect(param(`/${c}/evil.example`)).toBe("/");
+      expect(param(`/${c}/evil.example/path?x=1`)).toBe("/");
+      expect(param(`htt${c}ps://evil.example`)).toBe("/");
+    }
   });
 
   it("falls back to the home page when there is no parameter at all", () => {
-    expect(safeCallbackUrl("")).toBe("/");
-    expect(safeCallbackUrl("?x=1")).toBe("/");
-    expect(safeCallbackUrl("?callbackUrl=")).toBe("/");
+    expect(at("")).toBe("/");
+    expect(at("?x=1")).toBe("/");
+    expect(at("?callbackUrl=")).toBe("/");
   });
 });

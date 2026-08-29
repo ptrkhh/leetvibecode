@@ -42,7 +42,7 @@ export default function Login() {
           // which would force a Suspense boundary around a page that is
           // otherwise static. Nothing renders it, so there is nothing to
           // hydrate.
-          router.push(safeCallbackUrl(window.location.search));
+          router.push(safeCallbackUrl());
           // The nav's session comes from SessionProvider, which signIn already
           // refreshed; this refetches the SERVER render so personal bests
           // appear without a full page reload.
