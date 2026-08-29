@@ -241,9 +241,13 @@ export default function Dashboard({ id }: { id: string }) {
           {final && (
             <section className="rounded border p-4 text-sm">
               <h2 className="mb-2 font-semibold">How the final score was built</h2>
-              <div>0.4 × round 1 ({final.build.toFixed(3)})</div>
-              <div>+ 0.6 × round 2 ({final.extend.toFixed(3)})</div>
-              <div className="border-t pt-1">= {final.weighted.toFixed(4)}</div>
+              {/* R69: six decimals on all three, so the addition above the line
+                  reproduces the sum below it. At three the addends printed
+                  0.617 and 0.803 under a total of 0.7287, which hand-adds to
+                  0.7286. */}
+              <div>0.4 × round 1 ({final.text.build})</div>
+              <div>+ 0.6 × round 2 ({final.text.extend})</div>
+              <div className="border-t pt-1">= {final.text.weighted}</div>
               <div className="mt-2">
                 token factor {final.factor.toFixed(3)} = min(1, par {attempt.challenge.parTokens} ÷{" "}
                 {attempt.totalTokens} scored tokens), floored at 0.25
@@ -255,9 +259,13 @@ export default function Dashboard({ id }: { id: string }) {
                   </>
                 )}
               </div>
+              {/* The factor goes in as its exact integer ratio, not as the
+                  rounded decimal above -- left to right, w × par ÷ scored ×
+                  100 is unambiguous and exact. The bold number is still
+                  computed at full precision from Attempt.finalScore's own
+                  inputs, never from these strings. */}
               <div className="mt-2 border-t pt-1">
-                {final.weighted.toFixed(4)} × {final.factor.toFixed(3)} × 100 ={" "}
-                <b>{final.total.toFixed(2)}</b>
+                {final.text.weighted} × {final.text.factor} × 100 = <b>{final.text.total}</b>
               </div>
             </section>
           )}

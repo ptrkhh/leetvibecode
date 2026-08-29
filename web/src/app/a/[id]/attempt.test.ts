@@ -260,6 +260,45 @@ describe("finalMath reproduces the server's score", () => {
     expect(client.extend).toBe(1);
   });
 
+  // R69: the strip printed rounded intermediates under a total computed at
+  // full precision, so the worked equation did not multiply out -- 0.7723 x
+  // 0.333 x 100 = 25.72 under a printed 25.74. The bold number was never
+  // wrong; what broke was spec L20 for the one audience that checks it.
+  it("prints an equation that multiplies out by hand", () => {
+    // 6 runs x 500 tokens = 3000 scored against a par of 1000: a factor of
+    // exactly 1/3, the shape whose decimal rounding moved a printed cent. The
+    // earlier fixtures all landed on a factor of 1.000, where it cannot.
+    const side = (k: number) =>
+      [1, 0.8, 0.6].map((v, i) =>
+        run({ id: `${k}-${i}`, runScore: v * k, promptTokens: 250, completionTokens: 250 }));
+    const { server, client } = check(side(1), side(0.9), 1000);
+    const t = client.text;
+
+    expect(server.totalTokens).toBe(3000);
+    expect(t.factor).toBe("1000 ÷ 3000");
+    // Multiply the printed digits, left to right, exactly as printed.
+    const [par, scored] = t.factor.split(" ÷ ").map(Number);
+    expect((((Number(t.weighted) * par) / scored) * 100).toFixed(2)).toBe(t.total);
+    // The addition above the line reproduces the sum below it.
+    expect((0.4 * Number(t.build) + 0.6 * Number(t.extend)).toFixed(6)).toBe(t.weighted);
+    // And the bold number is still the server's own, never a product of these
+    // strings -- which is why the ratio, not more decimals, is the fix.
+    expect(t.total).toBe(server.finalScore.toFixed(2));
+    // Discriminating: the rounded decimal this replaced prints a different
+    // cent, so reverting to it fails here rather than shipping quietly.
+    expect((Number(t.weighted) * Number(client.factor.toFixed(3)) * 100).toFixed(2)).not.toBe(
+      t.total,
+    );
+  });
+
+  it("prints a clamped token factor as itself rather than as a ratio", () => {
+    const two = () => [run({ id: "x", runScore: 1 }), run({ id: "y", runScore: 0.5 })];
+    // par 100000 over 800 tokens: min() clamps to 1, which is not the ratio.
+    expect(check(two(), two(), 100000).client.text.factor).toBe("1");
+    // par 100 over 800 would be 0.125; the floor holds it at 0.25 (spec L36).
+    expect(check(two(), two(), 100).client.text.factor).toBe("0.25");
+  });
+
   it("shows nothing until the attempt is scored", () => {
     expect(finalMath(attempt([], { status: "active" }))).toBeNull();
     expect(finalMath(attempt([], { status: "voided" }))).toBeNull();

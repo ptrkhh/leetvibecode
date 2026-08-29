@@ -146,7 +146,21 @@ export type FinalMath = {
   weighted: number;
   factor: number;
   total: number;
+  // The equation EXACTLY as the page prints it. Here rather than formatted
+  // inline in the JSX so the test can multiply the printed digits back out and
+  // assert they give the printed answer -- R69: the page's whole reason to
+  // exist is spec L20, and a worked equation that does not multiply out reads
+  // as broken math to precisely the audience that checks it.
+  text: { build: string; extend: string; weighted: string; factor: string; total: string };
 };
+
+// R69: the token factor is the ratio of two integers this page already shows,
+// so printing the RATIO removes that term's rounding error from the equation
+// outright instead of shrinking it. Three decimals of 1/3 moved a real printed
+// total by 0.02 -- the reviewer's case, pinned in the tests. The two clamped
+// outcomes are not that ratio and print as themselves.
+const factorText = (par: number, scored: number, factor: number) =>
+  factor === 1 ? "1" : factor === 0.25 ? "0.25" : `${par} ÷ ${scored}`;
 
 // The whole formula, so a player can check the arithmetic: spec L40,
 // [0.4 x weighted_round1 + 0.6 x weighted_round2] x token_factor, x100.
@@ -161,7 +175,26 @@ export function finalMath(a: Attempt): FinalMath | null {
   // The SCORING total (survivors only, R53's corollary), not the live spend --
   // which is why it is read off the attempt rather than summed from the runs.
   const factor = tokenFactor(a.challenge.parTokens, a.totalTokens);
-  return { build, extend, weighted, factor, total: weighted * factor * 100 };
+  const total = weighted * factor * 100;
+  return {
+    build, extend, weighted, factor, total,
+    text: {
+      // Six decimals on the three round-weighted terms. RESIDUAL, named rather
+      // than hidden: rounding `weighted` to 6dp moves a recomputation of the
+      // total by up to 0.5e-6 x factor x 100 = 5e-5, against a half-cent
+      // display boundary of 5e-3 -- so roughly one attempt in a hundred can
+      // still print a last cent that a hand multiplication puts 0.01 away.
+      // Driving it to negligible needs ~8 decimals, which is absurd on screen.
+      // NOT closed by computing `total` from these strings: the bold number
+      // must stay the one scoreAttempt computed and Attempt.finalScore stores,
+      // and that invariant outranks the equation's last cent.
+      build: build.toFixed(6),
+      extend: extend.toFixed(6),
+      weighted: weighted.toFixed(6),
+      factor: factorText(a.challenge.parTokens, a.totalTokens, factor),
+      total: total.toFixed(2),
+    },
+  };
 }
 
 // The polite live region's content. Results arrive by polling, so without this
