@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  attempts     Attempt[]
+}
+
+model Challenge {
+  id             String    @id @default(cuid())
+  slug           String    @unique
+  title          String
+  description    String            // brief markdown, shown to players
+  interfaceText  String            // exact signatures/docstrings, sent to models
+  difficulty     String            // easy|medium|hard
+  parTokens      Int
+  followupPrompt String
+  models         String[]          // roster of Model.openrouterId
+  referenceMs    Float?            // written by seed from challenge.lock.json
+  status         String    @default("draft")
+  createdAt      DateTime  @default(now())
+  attempts       Attempt[]
+}
+
+model Attempt {
+  id          String    @id @default(cuid())
+  user        User      @relation(fields: [userId], references: [id])
+  userId      String
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+  challengeId String
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  finalScore  Float?
+  totalTokens Int       @default(0) // scoring total (survivors only); written once by web app on completion — NOT a running spend counter. Cost guards sum Run token columns directly, since platform-errored spend counts against quota but not score.
+  status      String    @default("active")
+  rounds      Round[]
+  @@index([userId, challengeId])
+  @@index([challengeId, status, finalScore])
+}
+
+model Round {
+  id          String   @id @default(cuid())
+  attempt     Attempt  @relation(fields: [attemptId], references: [id])
+  attemptId   String
+  index       Int      // 0=build, 1=extend
+  promptText  String
+  submittedAt DateTime @default(now())
+  runs        Run[]
+  @@unique([attemptId, index])
+}
+
+model Model {
+  id           String  @id @default(cuid())
+  openrouterId String  @unique
+  displayName  String
+  sizeTier     String
+  isActive     Boolean @default(true)
+  runs         Run[]
+}
+
+model Run {
+  id               String            @id @default(cuid())
+  round            Round             @relation(fields: [roundId], references: [id])
+  roundId          String
+  model            Model             @relation(fields: [modelId], references: [id])
+  modelId          String
+  generatedCode    String?
+  promptTokens     Int?
+  completionTokens Int?
+  status           String            @default("pending")
+  errorKind        String?           // platform|submission, set only when status=error
+  accuracy         Float?
+  perfScore        Float?
+  runScore         Float?
+  errorMessage     String?
+  tests            TestResult[]
+  benchmarks       BenchmarkResult[]
+  jobs             Job[]
+  // R54: one run per model per round is what the product means by a Run
+  // (spec L83, "Run = one model x one round"), and nothing enforced it. Two
+  // rows for one model in a round silently corrupt scoring rather than
+  // crashing: weightedRound ranks n=2 instead of n=1 and the model's tokens
+  // are counted twice. Unreachable through the app today (eligibleModelIds
+  // dedupes the fan-out roster), but that is a property of the current call
+  // graph, not of the data -- admin re-run or retry tooling would break it.
+  @@unique([roundId, modelId])
+  @@index([roundId])
+}
+
+model Job {
+  id        String    @id @default(cuid())
+  run       Run       @relation(fields: [runId], references: [id])
+  runId     String
+  type      String    // generate|test
+  state     String    @default("pending")
+  claimedBy String?
+  claimedAt DateTime?
+  result    Json?
+  error     String?
+  createdAt DateTime  @default(now())
+  @@index([state, type, createdAt])
+}
+
+model TestResult {
+  id        String  @id @default(cuid())
+  run       Run     @relation(fields: [runId], references: [id])
+  runId     String
+  name      String
+  passed    Boolean
+  message   String?
+  runtimeMs Float
+  @@index([runId])
+}
+
+model BenchmarkResult {
+  id        String  @id @default(cuid())
+  run       Run     @relation(fields: [runId], references: [id])
+  runId     String
+  inputSize Int
+  timeMs    Float
+  memoryMb  Float?
+  timedOut  Boolean @default(false)
+  @@index([runId])
+}

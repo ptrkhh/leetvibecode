@@ -1,0 +1,51 @@
+slug: event-scheduler
+title: Event Scheduler
+difficulty: medium
+brief: |
+  Build an in-memory event scheduler. Callers register callbacks against a
+  timestamp, may cancel them, and drive the scheduler forward by handing it
+  the current time; every event that has come due runs, oldest first.
+
+  Time is supplied by the caller, never read from a real clock, so the whole
+  thing is deterministic. This is correctness-first infrastructure: the exact
+  set of events that run, the order they run in, and the counts reported back
+  matter more than raw throughput. Getting an ordering or an off-by-one wrong
+  here silently drops or double-fires a caller's work.
+interface: |
+  class Scheduler:
+      def __init__(self):
+          """An empty scheduler. It never reads a real clock: the caller
+          supplies the current time to run_due()."""
+      def schedule(self, at: float, fn) -> int:
+          """Register the zero-argument callable `fn` to run at time `at`
+          (seconds, and not necessarily a whole number). Returns an id that
+          is unique among every event this scheduler hands out."""
+      def cancel(self, event_id) -> bool:
+          """Cancel a pending event. True if it was pending and is now
+          cancelled; False if the id is unknown, already cancelled, or its
+          event has already run."""
+      def run_due(self, now: float) -> int:
+          """Run every pending event whose time is <= now, earliest first,
+          and return how many ran. Events with equal times run in the order
+          they were scheduled. Once an event has run it is no longer pending
+          and will not run again."""
+parTokens: 10000
+models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
+followup:
+  prompt: |
+    Extend the scheduler with recurring events:
+    `schedule(at, fn, every_s=None)`.
+
+    With `every_s` set to a positive number of seconds, the event fires at
+    `at` and then repeats every `every_s` seconds, keeping the same id that
+    `schedule` returned; `cancel(id)` stops it for good, at any point in its
+    life. `every_s=None` (the default) is the existing one-shot behaviour,
+    and everything the scheduler already does -- time ordering, ties in
+    schedule order, the inclusive `<= now` boundary, the count returned by
+    `run_due`, what `cancel` returns -- must keep working unchanged.
+
+    One `run_due(now)` call must run each event at most once, even when
+    several intervals have elapsed since it last ran: missed occurrences are
+    skipped, never replayed as a backlog. Concretely, once a recurring event
+    has run inside `run_due(now)`, its next due time is the earliest
+    `at + k * every_s` (k = 1, 2, 3, ...) that is strictly greater than `now`.

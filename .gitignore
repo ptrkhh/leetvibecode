@@ -2,3 +2,8 @@
 node_modules/
 .env
 __pycache__/
+.venv/
+# docker-compose.prod.yml's judge bind mount -- runtime scratch space
+# (per-run workdirs are removed after each run; this just guards against
+# an operator running `git add -A` while the judge is mid-run).
+sandbox-tmp/

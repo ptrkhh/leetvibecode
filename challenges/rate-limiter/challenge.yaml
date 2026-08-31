@@ -1,0 +1,27 @@
+slug: rate-limiter
+title: Token Bucket Rate Limiter
+difficulty: medium
+brief: |
+  Build a token-bucket rate limiter. A bucket refills continuously at `rate`
+  tokens/second up to `capacity`. Each allowed call costs tokens; a call is
+  allowed only if enough tokens are available right now.
+
+  This is latency-critical infrastructure: `allow()` sits on a hot path, so
+  keep per-call work constant-time and avoid unnecessary allocations.
+interface: |
+  class RateLimiter:
+      def __init__(self, rate: float, capacity: float, clock=None):
+          """rate: tokens/sec refill. capacity: max tokens (bucket starts full).
+          clock: optional zero-arg callable returning seconds (monotonic);
+          defaults to time.monotonic. All timing MUST go through it."""
+      def allow(self, cost: float = 1.0) -> bool:
+          """Consume `cost` tokens and return True if available, else False
+          (no partial consumption)."""
+parTokens: 10000
+models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
+followup:
+  prompt: |
+    Extend the rate limiter with per-key buckets: `allow(cost=1.0, key="default")`
+    now rate-limits each key independently with the same rate/capacity settings.
+    Existing single-argument behavior must keep working unchanged (it uses the
+    default key). Keys are arbitrary strings; unknown keys start with a full bucket.

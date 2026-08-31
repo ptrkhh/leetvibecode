@@ -1,0 +1,39 @@
+slug: dedup-store
+title: Content-Addressed Blob Store
+difficulty: hard
+brief: |
+  Build a content-addressed blob store. Callers hand it bytes and get back a
+  hash; the same bytes always produce the same hash and are kept only once,
+  however many times they are stored.
+
+  This is safety-critical storage: losing or corrupting a caller's bytes is the
+  worst thing it can do. Whatever comes out of `get` must be byte-for-byte what
+  went in -- arbitrary binary, not text -- and a blob must stay retrievable for
+  as long as anyone has stored it.
+interface: |
+  class BlobStore:
+      def __init__(self):
+          """Start empty."""
+      def put(self, data: bytes) -> str:
+          """Store `data` and return its content hash: the lowercase hex
+          SHA-256 digest of the bytes, so identical content always yields the
+          same hash, in any store and in any process. Storing content that is
+          already present keeps exactly one copy and returns the same hash."""
+      def get(self, hash: str) -> bytes:
+          """Return the stored bytes for `hash`, exactly as they were given.
+          Raises KeyError if nothing is stored under that hash."""
+      def blob_count(self) -> int:
+          """How many distinct blobs are stored right now -- not how many
+          times put() was called."""
+parTokens: 14000
+models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
+followup:
+  prompt: |
+    Add reference-counted deletion: `delete(hash)` releases one stored copy of
+    that content. A blob is only freed -- dropped from `blob_count()` and no
+    longer returned by `get` -- once every `put` of that content has been
+    matched by a `delete`; until then `get` must keep returning it. Content
+    stored three times and deleted twice is still there. `delete` raises
+    KeyError when nothing is currently stored under that hash, including after
+    the last copy has been released, and storing the content again afterwards
+    starts a fresh count. Existing put/get/blob_count behavior is unchanged.

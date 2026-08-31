@@ -1,0 +1,38 @@
+slug: text-search
+title: Inverted-Index Text Search
+difficulty: medium
+brief: |
+  Build an in-memory search index. Documents are added one at a time and can
+  then be looked up by any single term they contain, case-insensitively.
+
+  This index is memory-bounded: it lives in RAM beside the corpus it serves,
+  so a lookup has to be answerable from the index alone. An index that goes
+  back to the documents at query time -- scanning them, re-tokenizing them --
+  is really just the corpus plus a scan, and it is the wrong shape here: this
+  index is queried far more often than it is written to.
+interface: |
+  class Index:
+      def __init__(self):
+          """Start empty."""
+      def add(self, doc_id: int, text: str) -> None:
+          """Index `text` under `doc_id`. Text is split into terms on every
+          character that is not a letter or a digit ('big cat', 'big,cat' and
+          'BIG--Cat' all yield the two terms 'big' and 'cat'); terms are
+          stored case-insensitively."""
+      def search(self, term: str) -> list[int]:
+          """Return the ids of every document containing `term`, compared
+          case-insensitively, in ascending id order. Each matching id appears
+          exactly once however often the term occurs in that document. A term
+          matches whole terms only, never a substring of one ('cat' does not
+          match 'category'). No match -> []."""
+parTokens: 12000
+models: [qwen/qwen-2.5-7b-instruct, meta-llama/llama-3.1-8b-instruct, mistralai/mistral-7b-instruct, google/gemma-2-9b-it]
+followup:
+  prompt: |
+    Extend search with phrase queries: when `term` is wrapped in double quotes,
+    `search('"big cat"')` returns only the documents where those terms occur
+    next to each other, in that order, with no term between them. Quoted
+    queries of one, two or more terms must all work, and the terms inside the
+    quotes are split and compared exactly like indexed text (case-insensitive,
+    punctuation separates). Unquoted single-term search must keep working
+    unchanged, and results are still ascending ids with no duplicates.

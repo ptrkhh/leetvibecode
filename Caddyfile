@@ -1,0 +1,23 @@
+{$SITE_ADDRESS}
+
+# Task 18 / R66: POST /api/attempts has no idempotency guard by design
+# (Ruling R65/R66 -- an active-attempt unique index would lock a player out
+# of a stuck attempt with no abandon UI in the MVP) and no throttle in app
+# code. Bound it here instead: 10 attempt-creations per source IP per
+# minute is generous for a human clicking "start challenge" and cuts a
+# tight retry loop from the measured ~67 req/s down to near nothing. Scoped
+# to this one path+method so it never touches the dashboard's status
+# polling (GET /api/attempts/[id]) or anything else.
+rate_limit {
+	zone attempts_create {
+		match {
+			method POST
+			path /api/attempts
+		}
+		key {remote_host}
+		events 10
+		window 1m
+	}
+}
+
+reverse_proxy web:3000
