@@ -45,7 +45,8 @@ async function callModel(model: string, messages: Message[]) {
         body: JSON.stringify({ model, messages, temperature: 0, seed: 7, max_tokens: 1200 }),
         signal: AbortSignal.timeout(25_000),
       });
-      if (!response.ok) throw new Error(`OpenRouter responded ${response.status}`);
+      // The body says why (out of credits, model retired); it goes to the server log only.
+      if (!response.ok) throw new Error(`OpenRouter responded ${response.status}: ${(await response.text()).slice(0, 300)}`);
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content;
       if (typeof content !== 'string') throw new Error('OpenRouter returned no text');

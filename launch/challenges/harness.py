@@ -25,7 +25,9 @@ def _run_suite(namespace, suite):
     scope = dict(namespace)
     exec(compile(suite["src"], suite["name"] + ".py", "exec"), scope)
     results = []
-    for name in [n for n in scope if n.startswith("test_") and callable(scope[n])]:
+    # Only the suite's own tests: generated code can define test_* functions too.
+    own = [n for n in scope if n.startswith("test_") and callable(scope[n]) and scope[n] is not namespace.get(n)]
+    for name in own:
         try:
             scope[name]()
             results.append({"suite": suite["name"], "name": name, "passed": True, "message": ""})
