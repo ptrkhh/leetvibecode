@@ -18,6 +18,7 @@ for folder in sorted(p for p in ROOT.iterdir() if (p / "reference.py").exists())
     good = harness.run({**base, "code": read("reference.py")})
     bad = harness.run({**base, "code": "x = 1"})
     broken = harness.run({**base, "code": "def oops(:"})
+    extra = harness.run({**base, "code": read("reference.py") + "\n\ndef test_extra():\n    assert False\n"})
 
     problems = [f"{t['suite']}.{t['name']}: {t['message']}" for t in good["tests"] if not t["passed"]]
     if good["load_error"] or good["bench_error"] or good["sub_ms"] is None:
@@ -28,6 +29,8 @@ for folder in sorted(p for p in ROOT.iterdir() if (p / "reference.py").exists())
         problems.append("an empty submission passed a test")
     if not broken["load_error"] or any(t["passed"] for t in broken["tests"]):
         problems.append("a syntax error was not reported as a load error")
+    if len(extra["tests"]) != len(good["tests"]) or not all(t["passed"] for t in extra["tests"]):
+        problems.append("a test_ function in the submission was run as a test")
 
     failed = failed or bool(problems)
     print(f"{'FAIL' if problems else 'ok  '} {folder.name}: {len(good['tests'])} tests, reference {good['ref_ms']:.0f} ms")
