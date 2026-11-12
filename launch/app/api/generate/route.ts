@@ -42,14 +42,22 @@ async function callModel(model: string, messages: Message[]) {
           'content-type': 'application/json',
         },
         // temperature 0 + fixed seed: the same prompt should score the same twice.
-        body: JSON.stringify({ model, messages, temperature: 0, seed: 7, max_tokens: 1200 }),
+        // Reasoning off: the models answer directly, so every token counted is code or prose.
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: 0,
+          seed: 7,
+          max_tokens: 1200,
+          reasoning: { enabled: false },
+        }),
         signal: AbortSignal.timeout(25_000),
       });
       // The body says why (out of credits, model retired); it goes to the server log only.
       if (!response.ok) throw new Error(`OpenRouter responded ${response.status}: ${(await response.text()).slice(0, 300)}`);
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content;
-      if (typeof content !== 'string') throw new Error('OpenRouter returned no text');
+      if (typeof content !== 'string' || !content) throw new Error('OpenRouter returned no text');
       return {
         content,
         promptTokens: Number(data.usage?.prompt_tokens) || 0,
@@ -117,10 +125,14 @@ export async function POST(request: Request) {
       : await callModel(MODELS[modelIndex].id, messages);
     return Response.json({ ...reply, code: extractCode(reply.content), mock });
   } catch (error) {
-    console.error('[generate]', MODELS[modelIndex].id, error instanceof Error ? error.message : error);
-    return Response.json(
-      { error: 'The model did not answer. This run is left out of your score.' },
-      { status: 502 },
-    );
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error('[generate]', MODELS[modelIndex].id, reason);
+    // Free models: the account's daily allowance, or the model's host, can run out.
+    const message = reason.includes('free-models-per-day')
+      ? "Today's free model runs are used up. Try again tomorrow."
+      : reason.includes('responded 429')
+        ? 'This model is busy right now. Try again in a minute.'
+        : 'The model did not answer.';
+    return Response.json({ error: `${message} This run is left out of your score.` }, { status: 502 });
   }
 }

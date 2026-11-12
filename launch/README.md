@@ -29,20 +29,20 @@ npm test           # scoring math + every reference solution against its tests
 Without `OPENROUTER_API_KEY` the site runs in demo mode: three models return
 the reference solution, one returns no code, and a banner says so.
 
-## Go live
+## Hosting
 
-1. Import the GitHub repo in Vercel and set Root Directory to `launch`.
-2. In Vercel, set the environment variables from `.env.example`:
-   - `OPENROUTER_API_KEY`. Set a credit limit on the key in the OpenRouter
-     dashboard first. That limit is the spend guard; the in-app rate limit is
-     only a speed bump.
-   - `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SECRET_KEY`, same values as the
-     Authentyc project.
-3. Run `supabase/lvc_waitlist.sql` once in the Supabase SQL editor.
-4. In Vercel, add the domain `leetvibecode.authentyc.ai`. In Cloudflare, add
-   the CNAME record Vercel shows (DNS only, not proxied).
-5. Play one challenge on the live site with the real models. The model path
-   has only been exercised in demo mode; see "Not verified yet" below.
+- Vercel project `leetvibecode`, Root Directory `launch`. Pushes to `main`
+  deploy to production; pull requests get protected preview deployments.
+- Domain `leetvibecode.authentyc.ai`: a CNAME in Cloudflare (DNS only, not
+  proxied) to the target Vercel shows for the domain.
+- Environment variables, as in `.env.example`:
+  - `OPENROUTER_API_KEY`. The models are free, so the key's credit limit can
+    stay at $0. Set a real limit before switching to paid models: it is the
+    spend guard, and the in-app rate limit is only a speed bump.
+  - `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SECRET_KEY`: the Authentyc
+    Supabase project, through a secret key named `leetvibecode` that only this
+    app uses. Revoke that key to cut this app off without touching Authentyc.
+- `supabase/lvc_waitlist.sql` has been run in that project.
 
 ## How it works
 
@@ -55,8 +55,11 @@ the reference solution, one returns no code, and a banner says so.
 - `lib/scoring.ts` is the scoring math from the design doc, as pure functions.
 - `challenges/<slug>/` holds a reference solution, the two test suites and the
   benchmark. Text shown to players is in `lib/challenges.ts`.
-- `lib/models.ts` is the model list. OpenRouter retires models without notice;
-  check it first when runs come back "left out".
+- `lib/models.ts` is the model list. The models are free, which caps the
+  whole site at 50 model requests a day (6 plays) until the OpenRouter account
+  has bought $10 of credits, then 1,000 a day. When the cap is hit, runs say so
+  and are left out of the score. OpenRouter also retires models without notice;
+  check this list first when runs come back "left out".
 
 ## What differs from the MVP
 
@@ -84,9 +87,10 @@ deliberately smaller:
 - The reference time is measured on the visitor's device during each run, not
   stored at publish time.
 
-## Not verified yet
+## Calibration so far
 
-- Real model calls. No OpenRouter key was available during the build, so the
-  request shape, the four model IDs and the par token budgets in
-  `lib/challenges.ts` are untested against live models.
-- The waitlist insert against a real Supabase project.
+Two real plays on 2026-11-12, one careful prompt each, every model answering
+both rounds: `lru-cache` scored 99 with 4,019 tokens (par 8,000) and
+`rate-limiter` scored 99 with 4,269 tokens (par 7,000). Par is generous, and a
+careful prompt reaches the top score. Recalibrate par, and check how far a
+lazy prompt falls, once more plays are in.
