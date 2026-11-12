@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tokens and background copied from authentyc.ai (landing_page/app/globals.css)
+   so both sites read as one company. Change them in both places together. */
+@layer base {
+  :root {
+    --dark-950: #0A0A0F;
+    --brand-primary: #10B981;
+    --brand-primary-hover: #34D399;
+    --brand-primary-glow: rgba(16, 185, 129, 0.4);
+    --surface-base: rgba(255, 255, 255, 0.03);
+    --surface-border: rgba(255, 255, 255, 0.08);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    background: var(--dark-950);
+    color: #E5E5E5;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* Subtle grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      linear-gradient(0deg, transparent 95%, rgba(255, 255, 255, 0.02) 100%) 0 0 / 60px 60px,
+      linear-gradient(90deg, transparent 95%, rgba(255, 255, 255, 0.02) 100%) 0 0 / 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Emerald atmosphere in two corners */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(circle at 20% 20%, var(--brand-primary-glow) 0%, transparent 40%),
+      radial-gradient(circle at 80% 80%, var(--brand-primary-glow) 0%, transparent 40%);
+    pointer-events: none;
+    opacity: 0.3;
+    z-index: 0;
+  }
+
+  header,
+  main,
+  footer {
+    position: relative;
+    z-index: 2;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Frosted panel, same recipe as Authentyc's SurfaceCard */
+  .surface {
+    @apply relative rounded-2xl border border-[var(--surface-border)] bg-[var(--surface-base)] shadow-[0_8px_32px_rgba(0,0,0,0.3)];
+  }
+
+  .surface::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  }
+
+  /* Same recipe as Authentyc's PremiumButton */
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl border border-white/10 bg-gradient-to-r from-brand-primary to-brand-primary-hover px-8 py-4 text-base font-semibold text-white shadow-[0_0_40px_var(--brand-primary-glow)] transition-shadow duration-300 hover:shadow-[0_0_60px_var(--brand-primary-glow)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-xl border border-white/15 bg-white/5 px-8 py-4 text-base font-semibold text-white transition-colors duration-300 hover:border-white/30 hover:bg-white/10;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-white/15 bg-black/30 px-4 py-3 text-white placeholder:text-gray-500 focus:border-brand-primary focus:outline-none;
+  }
+}

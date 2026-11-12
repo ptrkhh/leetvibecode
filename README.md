@@ -2,6 +2,11 @@
 
 Next.js web app + Python FastAPI judge service sharing one Postgres.
 
+`launch/` is a separate, smaller build for `leetvibecode.authentyc.ai`: one
+Next.js app for Vercel, judge in the visitor's browser, waitlist instead of
+accounts. It does not use `web/`, `judge/` or `challenges/`. See
+`launch/README.md`.
+
 ## Quickstart
 
 ```bash
