@@ -177,7 +177,7 @@ export function Play({ challenge, files }: { challenge: Challenge; files: Challe
         </p>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <section aria-labelledby="task" className="surface space-y-4 p-6">
           <h2 id="task" className="font-display text-xl font-bold text-white">
             The task
@@ -283,7 +283,7 @@ export function Play({ challenge, files }: { challenge: Challenge; files: Challe
             {busy ? `Running round ${view + 1}.` : viewed ? `Round ${view + 1} finished with ${pct(viewed.score)}.` : ''}
           </p>
 
-          <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
             {MODELS.map((model, m) => (
               <ModelCard
                 key={model.id}
